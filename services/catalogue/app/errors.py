@@ -1,0 +1,64 @@
+"""Consistent error responses.
+
+Every error leaves the service as:
+    {"error": {"code": "NOT_FOUND", "message": "...", "correlationId": "..."}}
+"""
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.correlation import get_correlation_id
+
+_CODES = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    422: "VALIDATION_ERROR",
+    429: "TOO_MANY_REQUESTS",
+    500: "INTERNAL_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+
+class APIError(Exception):
+    """Raise from route code for an expected failure, e.g. APIError(404, "EVENT_NOT_FOUND", ...)."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+
+def error_response(
+    status_code: int, code: str, message: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
+    body = {"error": {"code": code, "message": message, "correlationId": get_correlation_id()}}
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(APIError)
+    async def _api_error(_: Request, exc: APIError) -> JSONResponse:
+        return error_response(exc.status_code, exc.code, exc.message)
+
+    # Covers FastAPI's HTTPException and Starlette's own 404/405 for unknown routes.
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = _CODES.get(exc.status_code, "HTTP_ERROR")
+        return error_response(exc.status_code, code, str(exc.detail), exc.headers)
+
+    # Pydantic validation failures. Report the first problem without echoing input values.
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = exc.errors()
+        first = errors[0] if errors else {}
+        location = ".".join(str(part) for part in first.get("loc", ()))
+        reason = first.get("msg", "Invalid request")
+        message = f"{location}: {reason}" if location else reason
+        return error_response(422, "VALIDATION_ERROR", message)

@@ -14,4 +14,30 @@
 
 **Publishes (Phase 3):** `EventCreated`.
 
-*Not implemented yet.* Will contain `app/`, `tests/`, `openapi.yaml`, `template.yaml`.
+## Status
+
+- [x] 2a: skeleton: health check, correlation IDs, JSON logs, consistent error body, Lambda handler
+- [ ] 2b: DynamoDB model + `/v1/events` endpoints
+- [ ] 2c: role/ownership checks, OpenAPI spec, SAM template
+
+## Local development (PowerShell, from this folder)
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+
+pytest                     # run tests
+ruff check . ; ruff format --check .
+uvicorn app.main:app --reload --port 8001   # then open http://127.0.0.1:8001/docs
+```
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `app/main.py` | FastAPI app, middleware, routes; `handler` is the Lambda entry point (Mangum) |
+| `app/correlation.py` | `X-Correlation-Id` validation/generation, stored per request in a ContextVar |
+| `app/logging_config.py` | JSON log formatter (adds service + correlation ID to every line) |
+| `app/errors.py` | `APIError` and handlers producing `{"error": {code, message, correlationId}}` |
+| `tests/` | pytest suite, including a test invoking `handler` with an API Gateway event |

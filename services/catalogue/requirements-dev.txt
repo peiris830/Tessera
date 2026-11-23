@@ -1,0 +1,7 @@
+# Local development and test dependencies (never packaged)
+-r requirements.txt
+uvicorn>=0.30
+pytest>=8.0
+# Starlette's TestClient (starlette>=1.x) uses httpx2; plain httpx is deprecated for it
+httpx2>=2.16
+ruff>=0.6
