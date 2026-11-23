@@ -33,8 +33,8 @@ flowchart LR
   res --- resDb
   tix --- tixDb
 
-  res -->|"get event capacity (REST)"| cat
-  res -->|"charge / refund (REST)"| pay
+  res -->|"get capacity, once per event (REST)"| cat
+  res -->|"charge / refund (REST, IAM-signed)"| pay
   res -->|IssueTicket message| q[["SQS ticket-issuance queue"]]
   q -->|consumed by| tix
   q -->|after max retries| dlq[["DLQ"]]
@@ -82,6 +82,8 @@ publishes. This lets each service change its data model, deploy and scale indepe
 Note that **capacity *definition*** (how many places an event has) belongs to Catalogue, while
 **capacity *consumption*** (`held`, `confirmed` counters) belongs to Reservation. The counter
 must sit in the same table as the reservations so one service can update it atomically.
+Reservation creates the counter on the first reservation for an event, by fetching the
+capacity from Catalogue's API once ([ADR 0003](adr/0003-capacity-counter-initialisation.md)).
 
 ## 3. Main flow (Phase 1)
 
@@ -152,6 +154,10 @@ requests cannot both pass.
    because only the service knows who owns a record.
 4. Lambdas get **least-privilege IAM roles**: each function may access only its own table,
    queue and bus.
+5. **Service-to-service calls:** Reservation → Catalogue forwards the caller's JWT (a read any
+   signed-in user may do). Reservation → Mock Payment uses an IAM-authorised route, and
+   Reservation signs requests with SigV4. Only Reservation's role may invoke it
+   ([ADR 0004](adr/0004-mock-payment-iam-auth.md)).
 
 ## 6. Cross-cutting conventions
 
@@ -169,16 +175,19 @@ requests cannot both pass.
 
 - One **SAM** stack per service (`services/<name>/template.yaml`). SAM is a CloudFormation
   extension: you describe functions, APIs and tables in YAML, and `sam deploy` creates them.
-- Shared resources (Cognito user pool, EventBridge bus) live in a shared stack. Service
-  stacks reference its outputs. *(Exact location to be decided; see open questions.)*
+- Shared resources (Cognito user pool, EventBridge bus) live in the shared stack
+  `infra/shared/template.yaml` (`tessera-<env>-shared`). It's deployed first, and it publishes
+  IDs and ARNs to SSM Parameter Store under `/tessera/<env>/...` for service stacks to read
+  ([ADR 0002](adr/0002-shared-platform-stack.md)).
 - Frontend is uploaded to S3 and served via CloudFront.
 
-## 8. Open questions
+## 8. Architecture decisions
 
-- **Where does the shared stack live?** Proposal: `infra/shared/template.yaml`, which adds an
-  `infra/` folder to the target layout.
-- **How does Reservation learn an event's capacity?** Phase 1 proposal: on the first
-  reservation for an event, call Catalogue's API and create the counter with
-  `attribute_not_exists`. Later it can be created from the `EventCreated` event instead.
-- **How is Mock Payment protected?** It's internal-only. Options are IAM-authorised API routes
-  or direct Lambda invoke. To be decided when we build it.
+Decisions are recorded as ADRs in [docs/adr/](adr/):
+
+| ADR | Decision |
+|---|---|
+| [0001](adr/0001-serverless-microservices-per-service-stack.md) | Serverless microservices: Lambda + HTTP API, one SAM stack and one DynamoDB table per service |
+| [0002](adr/0002-shared-platform-stack.md) | Shared resources (Cognito, EventBridge bus) in `infra/shared/`; outputs published via SSM Parameter Store |
+| [0003](adr/0003-capacity-counter-initialisation.md) | Reservation creates each event's capacity counter on first reservation, fetching capacity from Catalogue once |
+| [0004](adr/0004-mock-payment-iam-auth.md) | Mock Payment is an internal HTTP API protected by IAM; Reservation signs requests with SigV4 |

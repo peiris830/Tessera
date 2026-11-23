@@ -30,6 +30,7 @@ and the correctness rules. Design decisions are recorded in [docs/adr/](docs/adr
 
 ```
 docs/                 architecture, ADRs, test evidence
+infra/shared/         shared SAM stack: Cognito user pool, EventBridge bus
 services/<name>/      app/, tests/, openapi.yaml, template.yaml (one SAM stack per service)
 frontend/             static site (S3 + CloudFront)
 data-platform/        Firehose/Glue infra, dbt project, dashboard
