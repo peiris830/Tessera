@@ -1,0 +1,46 @@
+# --- Secrets & local config (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+samconfig.local.toml
+.aws/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# --- AWS SAM build output ---
+.aws-sam/
+
+# --- Frontend ---
+node_modules/
+frontend/dist/
+
+# --- dbt ---
+data-platform/dbt/target/
+data-platform/dbt/dbt_packages/
+data-platform/dbt/logs/
+profiles.yml
+
+# --- Local data (synthetic data goes to S3, not git) ---
+*.parquet
+scripts/output/
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+.DS_Store

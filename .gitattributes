@@ -1,0 +1,8 @@
+# Normalise line endings to LF in the repo. Lambda, CI runners and shell
+# scripts all run on Linux; CRLF from Windows breaks shebangs and some parsers.
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.parquet binary
