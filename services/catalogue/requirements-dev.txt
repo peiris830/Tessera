@@ -1,5 +1,5 @@
 # Local development and test dependencies (never packaged)
--r requirements.txt
+-r src/requirements.txt
 uvicorn>=0.30
 pytest>=8.0
 # Starlette's TestClient (starlette>=1.x) uses httpx2; plain httpx is deprecated for it
@@ -8,3 +8,5 @@ ruff>=0.6
 # boto3 is pre-installed in the Lambda Python runtime, so it's a dev dependency only.
 boto3>=1.34
 moto[dynamodb]>=5.0
+# Reading template.yaml in tests and writing openapi.yaml
+PyYAML>=6.0

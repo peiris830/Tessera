@@ -32,7 +32,7 @@ and the correctness rules. Design decisions are recorded in [docs/adr/](docs/adr
 ```
 docs/                 architecture, ADRs, test evidence
 infra/shared/         shared SAM stack: Cognito user pool, EventBridge bus
-services/<name>/      app/, tests/, openapi.yaml, template.yaml (one SAM stack per service)
+services/<name>/      src/app/, tests/, openapi.yaml, template.yaml (one SAM stack per service)
 frontend/             static site (S3 + CloudFront)
 data-platform/        Firehose/Glue infra, dbt project, dashboard
 tests/e2e/            end-to-end tests against a deployed stack
@@ -43,8 +43,9 @@ scripts/              synthetic data generator, seeding, backup/restore helpers
 
 ## Status
 
-Phase 1 (core platform) is in progress. The scaffold and architecture docs are done; the
-services aren't built yet.
+Phase 1 (core platform) is in progress. The scaffold and architecture docs are done, and the
+[Catalogue](services/catalogue/) service is built and tested with its SAM template; it isn't
+deployed yet. The other services are still to come.
 
 ## Prerequisites
 

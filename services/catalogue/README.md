@@ -25,7 +25,7 @@ the change → `409`. Identity comes only from API Gateway's verified JWT claims
 - [x] 2a: skeleton: health check, correlation IDs, JSON logs, consistent error body, Lambda handler
 - [x] 2b: DynamoDB model, repository, public read endpoints
 - [x] 2c: authentication/roles/ownership, organiser endpoints (create, update, publish, list own)
-- [ ] 2d: OpenAPI spec, SAM template
+- [x] 2d: OpenAPI spec (generated, drift-tested), SAM template (table, function, API, logs)
 
 ## Data model (`events` table)
 
@@ -47,8 +47,18 @@ pip install -r requirements-dev.txt
 
 pytest                     # run tests
 ruff check . ; ruff format --check .
-uvicorn app.main:app --reload --port 8001   # then open http://127.0.0.1:8001/docs
+python scripts/export_openapi.py            # regenerate openapi.yaml after API changes
+uvicorn app.main:app --reload --port 8001 --app-dir src   # then open http://127.0.0.1:8001/docs
 ```
+
+## Build and deploy (AWS SAM)
+
+```powershell
+sam validate --lint              # check template.yaml (local, no AWS calls needed)
+sam build --use-container        # build inside AWS's Python 3.12 Lambda image (needs Docker)
+```
+
+Deploying needs the shared stack (Cognito SSM parameters) first; see the project build log.
 
 Tests use **moto** (in-memory fake AWS) with fake credentials, so they never touch a real
 account. Running the server locally serves `/v1/health`; the events endpoints need a real
@@ -56,17 +66,23 @@ table (`EVENTS_TABLE_NAME`) until a local DynamoDB option is added.
 
 ## Layout
 
+Only `src/` is packaged into the Lambda (SAM `CodeUri: src/`).
+
 | Path | Purpose |
 |---|---|
-| `app/main.py` | FastAPI app, middleware, routes; `handler` is the Lambda entry point (Mangum) |
-| `app/correlation.py` | `X-Correlation-Id` validation/generation, stored per request in a ContextVar |
-| `app/logging_config.py` | JSON log formatter (adds service + correlation ID to every line) |
-| `app/errors.py` | `APIError` and handlers producing `{"error": {code, message, correlationId}}` |
-| `app/models.py` | `Event` (internal) and `EventOut`/`EventPage` (public API, camelCase) |
-| `app/repository.py` | The only DynamoDB code: create (conditional), get, list published |
-| `app/pagination.py` | Encode/decode the opaque `nextToken` |
-| `app/dependencies.py` | `get_repository()`: the table client, overridden in tests |
-| `app/auth.py` | `Caller` from API Gateway JWT claims; `get_caller` (401), `require_organiser` (403) |
-| `app/events.py` | `/v1/events` routes: browse + organiser management |
-| `app/organisers.py` | `/v1/organisers/me/events` |
-| `tests/` | pytest suite, including a test invoking `handler` with an API Gateway event |
+| `src/requirements.txt` | Runtime dependencies (packaged) |
+| `src/app/main.py` | FastAPI app, middleware, OpenAPI security; `handler` is the Lambda entry point |
+| `src/app/correlation.py` | `X-Correlation-Id` validation/generation, stored per request in a ContextVar |
+| `src/app/logging_config.py` | JSON log formatter (adds service + correlation ID to every line) |
+| `src/app/errors.py` | `APIError`, error handlers, `ErrorResponse` schema for the spec |
+| `src/app/models.py` | `Event` (internal), request bodies, `EventOut`/`EventPage` (public API) |
+| `src/app/repository.py` | The only DynamoDB code: conditional create/update/publish, get, queries |
+| `src/app/pagination.py` | Encode/decode the opaque `nextToken` |
+| `src/app/dependencies.py` | `get_repository()`: the table client, overridden in tests |
+| `src/app/auth.py` | `Caller` from API Gateway JWT claims; `get_caller` (401), `require_organiser` (403) |
+| `src/app/events.py` | `/v1/events` routes: browse + organiser management |
+| `src/app/organisers.py` | `/v1/organisers/me/events` |
+| `template.yaml` | SAM template: table, function, HTTP API + JWT authorizer, log groups, SSM URL |
+| `openapi.yaml` | Generated API spec (`scripts/export_openapi.py`); a test fails if it drifts |
+| `tests/` | pytest suite; `tests/cfn.py` reads `template.yaml` so moto builds the same table |
+| `requirements-dev.txt` | Local tools and test dependencies (not packaged) |

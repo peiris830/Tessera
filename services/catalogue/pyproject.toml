@@ -1,5 +1,6 @@
 [tool.pytest.ini_options]
-pythonpath = ["."]
+# src/ holds the deployable package (SAM CodeUri); "." lets tests import tests.conftest
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 filterwarnings = [
   "error",  # treat unexpected warnings as failures so they get noticed
@@ -10,6 +11,7 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+src = ["src", "."]  # so `app` and `tests` are sorted as first-party imports
 
 [tool.ruff.lint]
 # E/F: pycodestyle + pyflakes, I: import order, B: bugbear, UP: modern syntax

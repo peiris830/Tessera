@@ -10,7 +10,8 @@ from app.auth import Caller, get_caller
 from app.dependencies import get_repository
 from app.main import create_app
 from app.models import Event, EventStatus, Venue
-from app.repository import BY_ORGANISER, BY_STATUS_START, EventRepository
+from app.repository import EventRepository
+from tests.cfn import events_table_definition
 
 # Synthetic callers. ORGANISER owns events made by make_event() unless told otherwise.
 ATTENDEE = Caller(user_id="att-0001", groups=frozenset({"attendee"}))
@@ -28,36 +29,9 @@ def fake_aws_credentials(monkeypatch):
 
 
 def create_events_table(dynamodb, name: str):
-    """Mirrors the events table that the SAM template will define (step 2c)."""
-    return dynamodb.create_table(
-        TableName=name,
-        BillingMode="PAY_PER_REQUEST",  # on-demand: pay per request, no capacity planning
-        AttributeDefinitions=[
-            {"AttributeName": "eventId", "AttributeType": "S"},
-            {"AttributeName": "status", "AttributeType": "S"},
-            {"AttributeName": "startsAt", "AttributeType": "S"},
-            {"AttributeName": "organiserId", "AttributeType": "S"},
-        ],
-        KeySchema=[{"AttributeName": "eventId", "KeyType": "HASH"}],
-        GlobalSecondaryIndexes=[
-            {
-                "IndexName": BY_STATUS_START,
-                "KeySchema": [
-                    {"AttributeName": "status", "KeyType": "HASH"},
-                    {"AttributeName": "startsAt", "KeyType": "RANGE"},
-                ],
-                "Projection": {"ProjectionType": "ALL"},
-            },
-            {
-                "IndexName": BY_ORGANISER,
-                "KeySchema": [
-                    {"AttributeName": "organiserId", "KeyType": "HASH"},
-                    {"AttributeName": "startsAt", "KeyType": "RANGE"},
-                ],
-                "Projection": {"ProjectionType": "ALL"},
-            },
-        ],
-    )
+    """Create the table from template.yaml's own definition: one source of truth, so the
+    table moto builds in tests is exactly the table CloudFormation builds on AWS."""
+    return dynamodb.create_table(TableName=name, **events_table_definition())
 
 
 @pytest.fixture

@@ -221,3 +221,76 @@ SAM template moved to step 2d.
 
 **Verified:** 92 tests. They include 403 and 404 for other organisers' events, mass-assignment
 attempts rejected, PATCH on a missing ID creating nothing, and the race guard holding.
+
+---
+
+## Step 2d: OpenAPI spec and SAM template
+
+**Built:** `services/catalogue/template.yaml` (the infrastructure as code), a generated
+`openapi.yaml` with a drift test, and tests that check the template's security and cost rules.
+The code moved to a `src/` layout. Nothing is deployed yet; deploying needs the shared stack
+(step 3).
+
+**What a SAM template is:**
+- **CloudFormation** is AWS's infrastructure-as-code service. You describe resources in YAML
+  and CloudFormation creates, updates or deletes them as one **stack**.
+- **SAM** is a shorthand on top of it. `Transform: AWS::Serverless-2016-10-31` makes types like
+  `AWS::Serverless::Function` expand into the Lambda function, its IAM role and its API
+  Gateway routes.
+- **`sam build`** installs the dependencies into a deployment package. `sam deploy` uploads it
+  and runs CloudFormation.
+
+**What the template creates:**
+
+| Resource | Key settings | Why |
+|---|---|---|
+| DynamoDB table | on-demand billing, both GSIs, PITR, deletion protection in prod only | Pay per request (≈ $0 when idle); PITR gives the backup/restore evidence Phase 1 asks for |
+| Lambda function | Python 3.12, arm64, 512 MB, 10 s timeout | arm64 (Graviton) is ~20% cheaper per GB-second; 10 s fails fast instead of hanging |
+| IAM policy | `GetItem`/`PutItem`/`UpdateItem` on the table, `Query` on its indexes | Least privilege: only what the code calls. No `Scan`, no `DeleteItem`, no wildcards |
+| HTTP API | Cognito JWT authorizer by default; `/v1/health` public; throttling 25 req/s, burst 50 | Unauthenticated requests are rejected before Lambda runs, so they cost nothing; throttling caps runaway bills |
+| Log groups | 14-day retention | Without a retention setting CloudWatch keeps logs forever and charges for storage |
+| Access log format | method, path, status, latency, request ID; no IP or user identity | No personal data in logs |
+| SSM parameter | `/tessera/<env>/catalogue/api-url` | Other services find this API without hard-coded URLs (ADR 0002) |
+
+**Concepts:**
+- **IAM policies** say who may do which action on which resource. SAM attaches the policy to the
+  function's execution role; the function gets temporary credentials for that role automatically,
+  so there are no keys in code or config.
+- **SSM-typed parameters** (`AWS::SSM::Parameter::Value<String>`): the template takes a parameter
+  *name* such as `/tessera/dev/cognito/issuer-url`, and CloudFormation reads its value at deploy
+  time. This is how the Catalogue stack picks up the shared stack's Cognito settings.
+- **The JWT authorizer** checks the token's signature against Cognito's public keys, plus issuer,
+  audience and expiry. The function still enforces roles and ownership itself.
+- **`!Ref`, `!GetAtt`, `!Sub`, `!If`** are CloudFormation functions: refer to a resource, read one
+  of its attributes (e.g. the table ARN), build a string, choose a value by condition.
+
+**Choices:**
+- **`src/` layout:** `CodeUri: src/` packages only the app and its runtime requirements, not the
+  tests, `.venv` or dev tools. boto3 is left out because the Lambda runtime already includes it.
+- **The spec is generated from the code** (`scripts/export_openapi.py`) and committed. A test
+  regenerates it and fails if the two differ, so the published spec can't go stale. The spec now
+  documents the real error body (`ErrorResponse`) for every error code and marks which routes
+  need a bearer JWT.
+- **The tests read the template.** `tests/cfn.py` parses it (keeping the `!Ref`-style tags), and
+  `conftest.py` builds the moto table from the template's own definition, so tests and AWS can't
+  disagree about keys and indexes. `test_template.py` turns the security rules into tests: least
+  privilege, only health is public, throttling set, every log group has retention, access logs
+  contain no IP or identity fields.
+- **`sam build --use-container`** builds inside AWS's Lambda build image. This matters because
+  pydantic-core ships compiled code: a Windows build would package a Windows binary that can't
+  run on Lambda. It also sidesteps local Python version issues.
+
+**Problems hit:**
+- **Cross-architecture build:** SAM warns when building arm64 on an x86 machine. Docker emulates
+  ARM, so the build is slower but works. The package was checked to contain
+  `_pydantic_core.cpython-312-aarch64-linux-gnu.so`, the ARM Linux binary.
+- **The SAM and AWS CLIs** had to be installed (`winget install Amazon.SAM-CLI` /
+  `Amazon.AWSCLI`), and Docker had to be running for the container build.
+
+**Cost:** nothing yet; nothing is deployed. When deployed: Lambda, API Gateway and DynamoDB
+on-demand cost ≈ $0 at this traffic (free tier / pay per request), PITR about $0.20 per GB-month
+(well under $0.01 for this table), and the SAM artifact bucket ≈ $0.01.
+
+**Verified:** 104 tests (spec drift, template policies, the moto table built from the template).
+`sam validate --lint` passed, and `sam build --use-container` succeeded: a 9.1 MB package with
+ARM binaries and no tests, venv or boto3.

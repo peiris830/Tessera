@@ -6,14 +6,14 @@ from fastapi import APIRouter, Query
 
 from app.auth import OrganiserCaller
 from app.dependencies import Repo
-from app.errors import APIError
+from app.errors import APIError, error_responses
 from app.models import EventOut, EventPage
 from app.pagination import MAX_TOKEN_LENGTH, InvalidPageTokenError, decode_token, encode_token
 
 router = APIRouter(prefix="/v1/organisers/me", tags=["organisers"])
 
 
-@router.get("/events", response_model=EventPage)
+@router.get("/events", response_model=EventPage, responses=error_responses(400, 401, 403, 422))
 def list_my_events(
     caller: OrganiserCaller,
     repo: Repo,

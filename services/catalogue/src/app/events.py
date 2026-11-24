@@ -16,7 +16,7 @@ from pydantic import AwareDatetime
 
 from app.auth import Caller, CurrentCaller, OrganiserCaller, get_caller
 from app.dependencies import Repo
-from app.errors import APIError
+from app.errors import APIError, error_responses
 from app.models import Event, EventCreate, EventOut, EventPage, EventStatus, EventUpdate
 from app.pagination import MAX_TOKEN_LENGTH, InvalidPageTokenError, decode_token, encode_token
 from app.repository import EventConflictError, EventRepository, to_iso
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/v1/events", tags=["events"], dependencies=[Depends(g
 # ---------- browse ----------
 
 
-@router.get("", response_model=EventPage)
+@router.get("", response_model=EventPage, responses=error_responses(400, 401, 422))
 def list_events(
     repo: Repo,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -56,7 +56,7 @@ def list_events(
     )
 
 
-@router.get("/{event_id}", response_model=EventOut)
+@router.get("/{event_id}", response_model=EventOut, responses=error_responses(401, 404, 422))
 def get_event(event_id: str, caller: CurrentCaller, repo: Repo) -> EventOut:
     return EventOut.from_event(_load_visible(repo, event_id, caller))
 
@@ -64,7 +64,7 @@ def get_event(event_id: str, caller: CurrentCaller, repo: Repo) -> EventOut:
 # ---------- manage (organisers) ----------
 
 
-@router.post("", status_code=201, response_model=EventOut)
+@router.post("", status_code=201, response_model=EventOut, responses=error_responses(401, 403, 422))
 def create_event(
     body: EventCreate, caller: OrganiserCaller, repo: Repo, response: Response
 ) -> EventOut:
@@ -84,7 +84,9 @@ def create_event(
     return EventOut.from_event(event)
 
 
-@router.patch("/{event_id}", response_model=EventOut)
+@router.patch(
+    "/{event_id}", response_model=EventOut, responses=error_responses(401, 403, 404, 409, 422)
+)
 def update_event(event_id: str, body: EventUpdate, caller: OrganiserCaller, repo: Repo) -> EventOut:
     event = _load_owned(repo, event_id, caller)
     changes = body.model_dump(exclude_unset=True)
@@ -113,7 +115,11 @@ def update_event(event_id: str, body: EventUpdate, caller: OrganiserCaller, repo
     return EventOut.from_event(updated)
 
 
-@router.post("/{event_id}/publish", response_model=EventOut)
+@router.post(
+    "/{event_id}/publish",
+    response_model=EventOut,
+    responses=error_responses(401, 403, 404, 409, 422),
+)
 def publish_event(event_id: str, caller: OrganiserCaller, repo: Repo) -> EventOut:
     event = _load_owned(repo, event_id, caller)
     now = datetime.now(UTC)

@@ -1,0 +1,515 @@
+openapi: 3.1.0
+info:
+  title: Tessera Catalogue API
+  description: 'Events: browse (signed-in users) and manage (organisers).'
+  version: 0.1.0
+paths:
+  /v1/health:
+    get:
+      tags:
+      - ops
+      summary: Health
+      description: 'Liveness check: the function is up and can serve requests.'
+      operationId: health_v1_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health V1 Health Get
+  /v1/events:
+    get:
+      tags:
+      - events
+      summary: List Events
+      description: Upcoming published events, soonest first. Follow `nextToken` for
+        more pages.
+      operationId: list_events_v1_events_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: nextToken
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 1024
+          - type: 'null'
+          title: Nexttoken
+      - name: from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: From
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          description: Bad request (e.g. invalid nextToken)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+    post:
+      tags:
+      - events
+      summary: Create Event
+      description: Create a DRAFT event owned by the caller. Publish it separately.
+      operationId: create_event_v1_events_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOut'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+  /v1/events/{event_id}:
+    get:
+      tags:
+      - events
+      summary: Get Event
+      operationId: get_event_v1_events__event_id__get
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Event Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOut'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found (or not visible to this caller)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+    patch:
+      tags:
+      - events
+      summary: Update Event
+      operationId: update_event_v1_events__event_id__patch
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Event Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOut'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found (or not visible to this caller)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict with the resource's current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+  /v1/events/{event_id}/publish:
+    post:
+      tags:
+      - events
+      summary: Publish Event
+      operationId: publish_event_v1_events__event_id__publish_post
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Event Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOut'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found (or not visible to this caller)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Conflict with the resource's current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+  /v1/organisers/me/events:
+    get:
+      tags:
+      - organisers
+      summary: List My Events
+      description: All of the caller's events (drafts, published, cancelled), ordered
+        by start time.
+      operationId: list_my_events_v1_organisers_me_events_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: nextToken
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 1024
+          - type: 'null'
+          title: Nexttoken
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          description: Bad request (e.g. invalid nextToken)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+components:
+  schemas:
+    ErrorDetail:
+      properties:
+        code:
+          type: string
+          title: Code
+          examples:
+          - EVENT_NOT_FOUND
+        message:
+          type: string
+          title: Message
+          examples:
+          - Event not found
+        correlationId:
+          type: string
+          title: Correlationid
+          examples:
+          - 2f7fe8ec-c0af-4b49-bcf5-54a4bd6250e3
+      type: object
+      required:
+      - code
+      - message
+      - correlationId
+      title: ErrorDetail
+    ErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+    EventCreate:
+      properties:
+        title:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Title
+        description:
+          type: string
+          maxLength: 5000
+          title: Description
+          default: ''
+        venue:
+          $ref: '#/components/schemas/Venue'
+        startsAt:
+          type: string
+          format: date-time
+          title: Startsat
+        capacity:
+          type: integer
+          maximum: 1000000.0
+          exclusiveMinimum: 0.0
+          title: Capacity
+      additionalProperties: false
+      type: object
+      required:
+      - title
+      - venue
+      - startsAt
+      - capacity
+      title: EventCreate
+      description: POST /v1/events body. The server sets eventId, organiserId, status
+        and timestamps.
+    EventOut:
+      properties:
+        eventId:
+          type: string
+          title: Eventid
+        title:
+          type: string
+          title: Title
+        description:
+          type: string
+          title: Description
+        venue:
+          $ref: '#/components/schemas/Venue'
+        startsAt:
+          type: string
+          format: date-time
+          title: Startsat
+        capacity:
+          type: integer
+          title: Capacity
+        status:
+          $ref: '#/components/schemas/EventStatus'
+      type: object
+      required:
+      - eventId
+      - title
+      - description
+      - venue
+      - startsAt
+      - capacity
+      - status
+      title: EventOut
+    EventPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/EventOut'
+          type: array
+          title: Items
+        nextToken:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Nexttoken
+      type: object
+      required:
+      - items
+      title: EventPage
+    EventStatus:
+      type: string
+      enum:
+      - DRAFT
+      - PUBLISHED
+      - CANCELLED
+      title: EventStatus
+    EventUpdate:
+      properties:
+        title:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Title
+        description:
+          anyOf:
+          - type: string
+            maxLength: 5000
+          - type: 'null'
+          title: Description
+        venue:
+          anyOf:
+          - $ref: '#/components/schemas/Venue'
+          - type: 'null'
+        startsAt:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Startsat
+        capacity:
+          anyOf:
+          - type: integer
+            maximum: 1000000.0
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Capacity
+      additionalProperties: false
+      type: object
+      title: EventUpdate
+      description: PATCH /v1/events/{id} body. Only the fields sent are changed.
+    Venue:
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+        city:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: City
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - city
+      title: Venue
+  securitySchemes:
+    cognitoJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito token; verified by API Gateway's JWT authorizer.

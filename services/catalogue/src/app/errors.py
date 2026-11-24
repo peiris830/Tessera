@@ -4,12 +4,45 @@ Every error leaves the service as:
     {"error": {"code": "NOT_FOUND", "message": "...", "correlationId": "..."}}
 """
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.correlation import get_correlation_id
+
+# --- Schema of the error body, used to document error responses in the OpenAPI spec ---
+
+
+class ErrorDetail(BaseModel):
+    code: str = Field(examples=["EVENT_NOT_FOUND"])
+    message: str = Field(examples=["Event not found"])
+    correlationId: str = Field(examples=["2f7fe8ec-c0af-4b49-bcf5-54a4bd6250e3"])
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+
+
+_DESCRIPTIONS = {
+    400: "Bad request (e.g. invalid nextToken)",
+    401: "No valid identity",
+    403: "Signed in, but not allowed (wrong role or not the owner)",
+    404: "Not found (or not visible to this caller)",
+    409: "Conflict with the resource's current state",
+    422: "Request failed validation",
+}
+
+
+def error_responses(*status_codes: int) -> dict[int | str, dict[str, Any]]:
+    """`responses=` value for a route, documenting its errors with the real error body."""
+    return {
+        code: {"model": ErrorResponse, "description": _DESCRIPTIONS[code]} for code in status_codes
+    }
+
 
 _CODES = {
     400: "BAD_REQUEST",

@@ -1,0 +1,232 @@
+# Tessera Catalogue service: SAM template.
+#
+# SAM is a CloudFormation extension. `Transform` below tells CloudFormation to expand the
+# compact AWS::Serverless::* types into plain CloudFormation resources (function, IAM role,
+# API routes, permissions...). Everything here is created, updated and deleted together as
+# one stack: tessera-<env>-catalogue.
+#
+# Prerequisite: the shared stack (infra/shared, ADR 0002) must be deployed first; it writes
+# the Cognito SSM parameters this template reads.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Tessera Catalogue service - events API (Lambda + HTTP API) and its DynamoDB table.
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: Deployment environment; used in resource names and SSM paths.
+
+  # SSM-typed parameters: at deploy time CloudFormation looks up the parameter NAME given
+  # here in SSM Parameter Store and uses its VALUE. For prod, pass the /tessera/prod/... names.
+  CognitoIssuerUrl:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /tessera/dev/cognito/issuer-url
+    Description: SSM parameter holding the Cognito user pool issuer URL (from the shared stack).
+  CognitoAppClientId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /tessera/dev/cognito/app-client-id
+    Description: SSM parameter holding the Cognito app client ID (from the shared stack).
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
+    Description: How long CloudWatch keeps logs. Without a limit, logs (and their cost) grow forever.
+
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+Resources:
+  # ---------------------------------------------------------------- data
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    # dev holds synthetic data only, so deleting the stack deletes the table. prod is
+    # protected by DeletionProtectionEnabled below (the delete fails until it is switched off).
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub tessera-${Env}-catalogue-events
+      BillingMode: PAY_PER_REQUEST # on-demand: pay per request, nothing while idle
+      AttributeDefinitions: # only key attributes are declared; items are otherwise schemaless
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: startsAt
+          AttributeType: S
+        - AttributeName: organiserId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH # partition key
+      GlobalSecondaryIndexes:
+        - IndexName: by-status-start # browse published events by date
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: startsAt
+              KeyType: RANGE # sort key
+          Projection:
+            ProjectionType: ALL
+        - IndexName: by-organiser # an organiser's own events
+          KeySchema:
+            - AttributeName: organiserId
+              KeyType: HASH
+            - AttributeName: startsAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      # Continuous backups: restore the table to any second in the last 35 days.
+      # COST: billed per GB-month of table size (~$0.20/GB); kilobytes here, so < $0.01/month.
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: !If [IsProd, true, false]
+      # Encryption at rest is always on (AWS-owned key, free); no setting needed.
+      Tags:
+        - Key: project
+          Value: tessera
+        - Key: service
+          Value: catalogue
+        - Key: env
+          Value: !Ref Env
+
+  # ---------------------------------------------------------------- compute
+  CatalogueFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub tessera-${Env}-catalogue
+      Description: Catalogue API (FastAPI via Mangum)
+      CodeUri: src/ # only src/ is packaged: app/ + requirements.txt (no tests, no .venv)
+      Handler: app.main.handler # module app/main.py, object `handler`
+      Runtime: python3.12
+      Architectures: [arm64] # Graviton: ~20% cheaper per GB-second than x86_64
+      MemorySize: 512 # Lambda allocates CPU in proportion to memory; 512 MB keeps cold starts quick
+      Timeout: 10 # seconds; API Gateway HTTP APIs give up after 30
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+          LOG_LEVEL: INFO
+      LoggingConfig:
+        LogGroup: !Ref CatalogueFunctionLogGroup
+        LogFormat: Text # our app already writes one JSON object per line
+      # Least-privilege IAM policy: exactly the DynamoDB calls app/repository.py makes, on
+      # this table only. AWS denies everything not explicitly allowed (no Scan, no Delete).
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: ReadWriteEvents
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt EventsTable.Arn
+            - Sid: QueryEventIndexes
+              Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !Sub ${EventsTable.Arn}/index/*
+      # Each HttpApi event becomes a route on CatalogueApi. SAM also adds a resource-based
+      # permission so that ONLY this API can invoke the function, which is why the code can
+      # trust the JWT claims API Gateway passes in.
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CatalogueApi
+            Method: GET
+            Path: /v1/health
+            Auth:
+              Authorizer: NONE # public liveness check
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CatalogueApi
+            Method: ANY
+            Path: /v1/{proxy+} # all other /v1 routes; protected by the default JWT authorizer
+      Tags:
+        project: tessera
+        service: catalogue
+        env: !Ref Env
+
+  CatalogueFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/tessera-${Env}-catalogue
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---------------------------------------------------------------- API
+  CatalogueApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub tessera-${Env}-catalogue-api
+      Auth:
+        # Every route uses this authorizer unless it opts out (like /v1/health).
+        # API Gateway checks the token's signature, issuer, audience and expiry; invalid
+        # tokens get 401 without the function ever running.
+        DefaultAuthorizer: CognitoJwt
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Ref CognitoIssuerUrl
+              audience:
+                - !Ref CognitoAppClientId
+      # Throttling caps requests per second across the API. It protects the backend and
+      # also caps cost if something (or someone) floods the API.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+      # One JSON line per request, written by API Gateway itself. This includes requests
+      # rejected before Lambda runs (e.g. 401 from the authorizer, 429 from throttling).
+      # No IP addresses or user identifiers: they would be personal data.
+      AccessLogSettings:
+        DestinationArn: !GetAtt CatalogueApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","time":"$context.requestTime",
+          "routeKey":"$context.routeKey","status":"$context.status",
+          "latencyMs":"$context.responseLatency",
+          "integrationError":"$context.integrationErrorMessage",
+          "authorizerError":"$context.authorizer.error"}
+      Tags:
+        project: tessera
+        service: catalogue
+        env: !Ref Env
+
+  CatalogueApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/tessera-${Env}-catalogue
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---------------------------------------------------------------- discovery (ADR 0002)
+  # Other services (Reservation) find Catalogue's URL here instead of hard-coding it.
+  CatalogueApiUrlParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/catalogue/api-url
+      Type: String # standard tier: free
+      Value: !Sub https://${CatalogueApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+      Description: Base URL of the Catalogue HTTP API
+      Tags:
+        project: tessera
+        service: catalogue
+        env: !Ref Env
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the Catalogue API
+    Value: !Sub https://${CatalogueApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  EventsTableName:
+    Description: DynamoDB table holding events
+    Value: !Ref EventsTable
+  FunctionName:
+    Description: Lambda function serving the API
+    Value: !Ref CatalogueFunction
