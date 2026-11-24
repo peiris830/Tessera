@@ -150,3 +150,74 @@ and need the authentication work.
 
 **Verified:** 37 tests. They include paging through 5 events 2 at a time with no gaps or
 duplicates, refusing to overwrite an existing event, and rejecting tampered or reused tokens.
+
+---
+
+## Step 2c: Authentication, roles, ownership and organiser endpoints
+
+**Built:** `app/auth.py` (the caller, taken from JWT claims), organiser endpoints (create,
+partial update, publish, list own events), and sign-in required on every events route.
+The original step 2c was split so each part stays reviewable; the OpenAPI spec and the
+SAM template moved to step 2d.
+
+**Authentication vs authorisation, and where each happens:**
+1. **Cognito issues a signed JWT at sign-in.** It carries `sub` (a stable, random user ID),
+   `cognito:groups` and `exp`.
+2. **API Gateway's JWT authorizer verifies the token before Lambda runs:** signature, issuer,
+   audience and expiry. Bad tokens get 401. Valid claims reach Lambda at
+   `requestContext.authorizer.jwt.claims`, which Mangum exposes as `request.scope["aws.event"]`.
+3. **The service does authorisation** (roles and ownership). It trusts the claims because only
+   API Gateway can invoke the function, and it **never** reads identity from a client header.
+   A test proves an `X-User-Id` header is ignored.
+
+**AWS quirk:** HTTP API flattens list claims, so `cognito:groups` arrives as the string
+`"[organiser attendee]"`. The parser accepts that form, comma-separated strings and real lists.
+
+**The access rules:**
+
+| Situation | Response | Reasoning |
+|---|---|---|
+| No identity | 401 | |
+| Wrong role | 403 `FORBIDDEN` | |
+| Missing, or someone else's draft | 404 | Nobody can tell a private draft exists |
+| Someone else's published event | 403 `NOT_EVENT_OWNER` | It's visible anyway, so 403 reveals nothing |
+| The event's state forbids the change | 409 | e.g. a cancelled event, or a second publish |
+
+**Protecting writes against races:**
+- **`UpdateItem` is an upsert:** it creates the item if it doesn't exist. Every update
+  therefore includes `attribute_exists(eventId)`; otherwise a PATCH to a made-up ID would
+  create a phantom event.
+- **Check-then-write has a gap.** The route reads the event to give precise errors (404, 403
+  or 409), but something can change before the write. So the write repeats the checks in
+  its condition: `organiserId = :owner AND #status = :expected`. If the event changed
+  meanwhile, the write fails with `409 EVENT_STATE_CONFLICT`. In short: the read is for
+  helpful messages, and the condition is what guarantees correctness.
+- **`status` is a DynamoDB reserved word,** so update expressions use `#placeholders` for
+  attribute names and `:placeholders` for values. They never concatenate user input into
+  an expression.
+
+**Other choices:**
+- **No mass assignment:** request models use `extra="forbid"`, so a client can't send
+  `organiserId` or `status`. The server sets them.
+- **Whitespace is stripped from input,** so `"   "` doesn't count as a title.
+- **Capacity locks after publishing** (ADR 0003): Reservation snapshots it once bookings
+  start, so changing it later would put the services out of step.
+- **Events are created as DRAFT;** publishing is a separate, explicit action that requires
+  a start time in the future.
+- **`/v1/organisers/me/events`** uses the `by-organiser` GSI. Its page token is pinned to the
+  caller, so one organiser's token can't page through another's events.
+- **The pagination token's second field became a general `scope`** (the `from` time for
+  browsing, the organiser ID for "my events").
+- **Pydantic v2 validator reuse:** a `FutureDatetime = Annotated[AwareDatetime,
+  AfterValidator(...)]` type replaced the v1-style `field_validator(...)(func)` trick.
+
+**Testing approach:**
+- **Most tests swap the caller** with `dependency_overrides` (`act_as(ORGANISER)` /
+  `act_as(None)`).
+- **Lambda handler tests send real API Gateway events with authorizer claims**, proving
+  the whole path from claims to caller to ownership.
+- **Repository tests simulate races directly:** read DRAFT, someone else publishes, then
+  the draft-only edit is rejected.
+
+**Verified:** 92 tests. They include 403 and 404 for other organisers' events, mass-assignment
+attempts rejected, PATCH on a missing ID creating nothing, and the race guard holding.

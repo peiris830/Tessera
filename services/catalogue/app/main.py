@@ -15,6 +15,7 @@ from app.correlation import HEADER, resolve_correlation_id, set_correlation_id
 from app.errors import error_response, register_error_handlers
 from app.events import router as events_router
 from app.logging_config import configure_logging
+from app.organisers import router as organisers_router
 
 SERVICE_NAME = "catalogue"
 logger = logging.getLogger(SERVICE_NAME)
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": SERVICE_NAME}
 
     app.include_router(events_router)
+    app.include_router(organisers_router)
     return app
 
 

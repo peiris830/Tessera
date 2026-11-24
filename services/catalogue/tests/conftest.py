@@ -6,10 +6,16 @@ import pytest
 from fastapi.testclient import TestClient
 from moto import mock_aws
 
+from app.auth import Caller, get_caller
 from app.dependencies import get_repository
 from app.main import create_app
 from app.models import Event, EventStatus, Venue
 from app.repository import BY_ORGANISER, BY_STATUS_START, EventRepository
+
+# Synthetic callers. ORGANISER owns events made by make_event() unless told otherwise.
+ATTENDEE = Caller(user_id="att-0001", groups=frozenset({"attendee"}))
+ORGANISER = Caller(user_id="org-0001", groups=frozenset({"organiser"}))
+OTHER_ORGANISER = Caller(user_id="org-0002", groups=frozenset({"organiser"}))
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +71,22 @@ def repo():
 def app(repo):
     application = create_app()
     application.dependency_overrides[get_repository] = lambda: repo
+    # Stands in for API Gateway's verified JWT claims. Default: a signed-in attendee.
+    application.dependency_overrides[get_caller] = lambda: ATTENDEE
     return application
+
+
+@pytest.fixture
+def act_as(app):
+    """act_as(ORGANISER) switches the caller; act_as(None) means no identity (-> 401)."""
+
+    def _act_as(caller: Caller | None) -> None:
+        if caller is None:
+            app.dependency_overrides.pop(get_caller, None)  # real extraction: no claims
+        else:
+            app.dependency_overrides[get_caller] = lambda: caller
+
+    return _act_as
 
 
 @pytest.fixture

@@ -2,11 +2,12 @@
 
 DynamoDB returns `LastEvaluatedKey` when a page is full; passing it back as
 `ExclusiveStartKey` continues from there. We hand it to clients as a URL-safe base64 string
-(`nextToken`) together with the query's lower time bound, so page 2 runs exactly the same
-query as page 1 even though "now" has moved on.
+(`nextToken`) together with a `scope`: whatever pins the token to the query that produced it
+(e.g. the original lower time bound, so page 2 runs exactly the same query as page 1 even
+though "now" has moved on).
 
 The token comes from the client, so it is untrusted: anything malformed raises
-InvalidPageTokenError, and the caller validates the decoded key's contents.
+InvalidPageTokenError, and the caller validates the decoded key and scope.
 """
 
 import base64
@@ -20,8 +21,8 @@ class InvalidPageTokenError(ValueError):
     pass
 
 
-def encode_token(last_key: dict[str, Any], starts_from: str) -> str:
-    raw = json.dumps({"k": last_key, "f": starts_from}, separators=(",", ":"))
+def encode_token(last_key: dict[str, Any], scope: str) -> str:
+    raw = json.dumps({"k": last_key, "s": scope}, separators=(",", ":"))
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
@@ -31,9 +32,9 @@ def decode_token(token: str) -> tuple[dict[str, Any], str]:
     try:
         padded = token + "=" * (-len(token) % 4)
         data = json.loads(base64.urlsafe_b64decode(padded))
-        key, starts_from = data["k"], data["f"]
+        key, scope = data["k"], data["s"]
     except (ValueError, KeyError, TypeError) as exc:  # bad base64/JSON/shape
         raise InvalidPageTokenError("malformed token") from exc
-    if not isinstance(key, dict) or not isinstance(starts_from, str):
+    if not isinstance(key, dict) or not isinstance(scope, str):
         raise InvalidPageTokenError("malformed token")
-    return key, starts_from
+    return key, scope

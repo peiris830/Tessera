@@ -2,23 +2,30 @@
 
 **Owns:** `events` table (events, venues, capacity definitions).
 
-## Planned endpoints (Phase 1)
+## Endpoints
 
 | Method | Route | Who | Notes |
 |---|---|---|---|
-| GET | `/v1/health` | anyone | health check |
-| GET | `/v1/events` | any signed-in user | browse/search published events |
-| GET | `/v1/events/{eventId}` | any signed-in user | event detail incl. capacity |
-| POST | `/v1/events` | organiser | create event; caller becomes owner |
-| PATCH | `/v1/events/{eventId}` | owning organiser | 403 for other organisers |
+| GET | `/v1/health` | anyone | liveness check |
+| GET | `/v1/events` | any signed-in user | upcoming published events, soonest first; `limit`, `from`, `nextToken` |
+| GET | `/v1/events/{eventId}` | any signed-in user | published/cancelled events; drafts only for their owner (others: 404) |
+| POST | `/v1/events` | organiser | creates a DRAFT owned by the caller; `201` + `Location` |
+| PATCH | `/v1/events/{eventId}` | owning organiser | partial update; capacity locked once published (`409 CAPACITY_LOCKED`) |
+| POST | `/v1/events/{eventId}/publish` | owning organiser | DRAFT → PUBLISHED; must start in the future |
+| GET | `/v1/organisers/me/events` | organiser | caller's own events, all statuses |
+
+**Access rules:** no identity → `401`; wrong role → `403 FORBIDDEN`; can't see it (missing or
+someone else's draft) → `404`; can see it but not yours → `403 NOT_EVENT_OWNER`; state forbids
+the change → `409`. Identity comes only from API Gateway's verified JWT claims.
 
 **Publishes (Phase 3):** `EventCreated`.
 
 ## Status
 
 - [x] 2a: skeleton: health check, correlation IDs, JSON logs, consistent error body, Lambda handler
-- [x] 2b: DynamoDB model, repository, public read endpoints (`GET /v1/events`, `GET /v1/events/{eventId}`)
-- [ ] 2c: role/ownership checks, create/update/organiser endpoints, OpenAPI spec, SAM template
+- [x] 2b: DynamoDB model, repository, public read endpoints
+- [x] 2c: authentication/roles/ownership, organiser endpoints (create, update, publish, list own)
+- [ ] 2d: OpenAPI spec, SAM template
 
 ## Data model (`events` table)
 
@@ -59,5 +66,7 @@ table (`EVENTS_TABLE_NAME`) until a local DynamoDB option is added.
 | `app/repository.py` | The only DynamoDB code: create (conditional), get, list published |
 | `app/pagination.py` | Encode/decode the opaque `nextToken` |
 | `app/dependencies.py` | `get_repository()`: the table client, overridden in tests |
-| `app/events.py` | `/v1/events` routes |
+| `app/auth.py` | `Caller` from API Gateway JWT claims; `get_caller` (401), `require_organiser` (403) |
+| `app/events.py` | `/v1/events` routes: browse + organiser management |
+| `app/organisers.py` | `/v1/organisers/me/events` |
 | `tests/` | pytest suite, including a test invoking `handler` with an API Gateway event |

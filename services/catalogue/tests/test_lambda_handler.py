@@ -6,12 +6,23 @@ translation in both directions.
 """
 
 import json
+from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from app.dependencies import get_repository
+from app.main import app as lambda_app
 from app.main import handler
 
 
-def http_api_event(method: str, path: str, headers: dict[str, str] | None = None) -> dict:
-    return {
+def http_api_event(
+    method: str,
+    path: str,
+    headers: dict[str, str] | None = None,
+    claims: dict | None = None,
+    body: dict | None = None,
+) -> dict:
+    event = {
         "version": "2.0",
         "routeKey": f"{method} {path}",
         "rawPath": path,
@@ -36,6 +47,56 @@ def http_api_event(method: str, path: str, headers: dict[str, str] | None = None
         },
         "isBase64Encoded": False,
     }
+    if claims is not None:
+        # What API Gateway's JWT authorizer adds after verifying the token.
+        event["requestContext"]["authorizer"] = {"jwt": {"claims": claims, "scopes": None}}
+    if body is not None:
+        event["body"] = json.dumps(body)
+        event["headers"]["content-type"] = "application/json"
+    return event
+
+
+@pytest.fixture
+def lambda_repo(repo):
+    """Point the real module-level app (the one `handler` serves) at the moto table."""
+    lambda_app.dependency_overrides[get_repository] = lambda: repo
+    yield repo
+    lambda_app.dependency_overrides.clear()
+
+
+def create_body() -> dict:
+    starts = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "title": "Via Lambda",
+        "venue": {"name": "Hall", "city": "Town"},
+        "startsAt": starts,
+        "capacity": 10,
+    }
+
+
+def test_claims_from_authorizer_identify_the_organiser(lambda_repo):
+    # Groups arrive flattened to a string, exactly as HTTP API sends them.
+    claims = {"sub": "org-0001", "cognito:groups": "[organiser]"}
+    event = http_api_event("POST", "/v1/events", claims=claims, body=create_body())
+
+    result = handler(event, None)
+
+    assert result["statusCode"] == 201
+    created = lambda_repo.get(json.loads(result["body"])["eventId"])
+    assert created.organiser_id == "org-0001"
+
+
+def test_attendee_claims_are_forbidden_from_creating(lambda_repo):
+    claims = {"sub": "att-0001", "cognito:groups": "[attendee]"}
+    event = http_api_event("POST", "/v1/events", claims=claims, body=create_body())
+
+    assert handler(event, None)["statusCode"] == 403
+
+
+def test_event_without_authorizer_claims_is_unauthenticated(lambda_repo):
+    event = http_api_event("GET", "/v1/events")
+
+    assert handler(event, None)["statusCode"] == 401
 
 
 def test_lambda_handler_serves_health_check():

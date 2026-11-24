@@ -6,8 +6,9 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -25,9 +26,29 @@ class EventStatus(StrEnum):
     CANCELLED = "CANCELLED"  # still viewable (attendees may hold tickets), not bookable
 
 
-class Venue(CamelModel):
+class InputModel(CamelModel):
+    """Base for request bodies.
+
+    extra="forbid" rejects unknown fields, preventing "mass assignment": a client can't
+    smuggle in fields the server owns, like organiserId or status.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class Venue(InputModel):
     name: str = Field(min_length=1, max_length=200)
     city: str = Field(min_length=1, max_length=100)
+
+
+def _require_future(value: datetime) -> datetime:
+    if value <= datetime.now(UTC):
+        raise ValueError("must be in the future")
+    return value
+
+
+# A reusable type: timezone-aware AND in the future.
+FutureDatetime = Annotated[AwareDatetime, AfterValidator(_require_future)]
 
 
 class Event(BaseModel):
@@ -41,6 +62,35 @@ class Event(BaseModel):
     status: EventStatus
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class EventCreate(InputModel):
+    """POST /v1/events body. The server sets eventId, organiserId, status and timestamps."""
+
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=5000)
+    venue: Venue
+    starts_at: FutureDatetime
+    capacity: int = Field(gt=0, le=1_000_000)
+
+
+class EventUpdate(InputModel):
+    """PATCH /v1/events/{id} body. Only the fields sent are changed."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    venue: Venue | None = None
+    starts_at: FutureDatetime | None = None
+    capacity: int | None = Field(default=None, gt=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def _at_least_one_non_null_field(self) -> "EventUpdate":
+        changes = self.model_dump(exclude_unset=True)
+        if not changes:
+            raise ValueError("at least one field must be provided")
+        if any(value is None for value in changes.values()):
+            raise ValueError("fields cannot be set to null")
+        return self
 
 
 class EventOut(CamelModel):

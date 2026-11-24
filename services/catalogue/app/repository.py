@@ -20,7 +20,21 @@ from app.pagination import InvalidPageTokenError
 
 BY_STATUS_START = "by-status-start"
 BY_ORGANISER = "by-organiser"
-_START_KEY_FIELDS = {"eventId", "status", "startsAt"}
+
+# Model field -> DynamoDB attribute, for the fields an organiser may update.
+_UPDATABLE_ATTRS = {
+    "title": "title",
+    "description": "description",
+    "venue": "venue",
+    "starts_at": "startsAt",
+    "capacity": "capacity",
+}
+
+# Every write is conditional. `attribute_exists(eventId)` matters because UpdateItem is an
+# UPSERT: without it, updating a non-existent ID would silently create a half-empty item.
+# Ownership and expected status are repeated in the condition so that a change between our
+# read and our write (a race) makes the write fail instead of silently applying.
+_OWNED_IN_STATE = "attribute_exists(eventId) AND organiserId = :owner AND #status = :expected"
 
 
 def to_iso(value: datetime) -> str:
@@ -30,6 +44,10 @@ def to_iso(value: datetime) -> str:
 
 class EventAlreadyExistsError(Exception):
     pass
+
+
+class EventConflictError(Exception):
+    """A conditional write failed: the event changed (or vanished) since it was read."""
 
 
 class EventRepository:
@@ -71,22 +89,126 @@ class EventRepository:
             "Limit": limit,
         }
         if start_key is not None:
-            _validate_start_key(start_key, starts_from)
+            _validate_start_key(
+                start_key,
+                fields={"eventId", "status", "startsAt"},
+                equals={"status": EventStatus.PUBLISHED.value},
+                min_starts_at=starts_from,
+            )
             query["ExclusiveStartKey"] = start_key
+        return self._run_query(query)
+
+    def list_by_organiser(
+        self, organiser_id: str, limit: int, start_key: dict[str, Any] | None = None
+    ) -> tuple[list[Event], dict[str, Any] | None]:
+        """All of one organiser's events (any status), ordered by start time."""
+        query: dict[str, Any] = {
+            "IndexName": BY_ORGANISER,
+            "KeyConditionExpression": Key("organiserId").eq(organiser_id),
+            "Limit": limit,
+        }
+        if start_key is not None:
+            _validate_start_key(
+                start_key,
+                fields={"eventId", "organiserId", "startsAt"},
+                equals={"organiserId": organiser_id},
+            )
+            query["ExclusiveStartKey"] = start_key
+        return self._run_query(query)
+
+    def update_fields(
+        self,
+        event_id: str,
+        changes: dict[str, Any],
+        *,
+        owner_id: str,
+        expected_status: EventStatus,
+        now: datetime,
+    ) -> Event:
+        """Apply `changes` (model field names) if the event is still owned and in that status."""
+        # "status" is a DynamoDB reserved word, so attribute names go through placeholders
+        # (#name) and values through :placeholders, never string concatenation.
+        names = {"#status": "status", "#updatedAt": "updatedAt"}
+        values: dict[str, Any] = {
+            ":owner": owner_id,
+            ":expected": expected_status.value,
+            ":now": to_iso(now),
+        }
+        assignments = ["#updatedAt = :now"]
+        for i, (field, value) in enumerate(changes.items()):
+            names[f"#f{i}"] = _UPDATABLE_ATTRS[field]
+            values[f":v{i}"] = _serialise(field, value)
+            assignments.append(f"#f{i} = :v{i}")
+        return self._conditional_update(
+            event_id,
+            update="SET " + ", ".join(assignments),
+            condition=_OWNED_IN_STATE,
+            names=names,
+            values=values,
+        )
+
+    def publish(self, event_id: str, *, owner_id: str, now: datetime) -> Event:
+        """DRAFT -> PUBLISHED, only for the owner and only if the event is still in the future."""
+        return self._conditional_update(
+            event_id,
+            update="SET #status = :published, updatedAt = :now",
+            condition=_OWNED_IN_STATE + " AND startsAt > :now",
+            names={"#status": "status"},
+            values={
+                ":owner": owner_id,
+                ":expected": EventStatus.DRAFT.value,
+                ":published": EventStatus.PUBLISHED.value,
+                ":now": to_iso(now),
+            },
+        )
+
+    def _conditional_update(
+        self, event_id: str, *, update: str, condition: str, names: dict, values: dict
+    ) -> Event:
+        try:
+            response = self._table.update_item(
+                Key={"eventId": event_id},
+                UpdateExpression=update,
+                ConditionExpression=condition,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ReturnValues="ALL_NEW",  # return the item as it is after the update
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise EventConflictError(event_id) from exc
+            raise
+        return _from_item(response["Attributes"])
+
+    def _run_query(self, query: dict[str, Any]) -> tuple[list[Event], dict[str, Any] | None]:
         response = self._table.query(**query)
         events = [_from_item(item) for item in response.get("Items", [])]
         return events, response.get("LastEvaluatedKey")
 
 
-def _validate_start_key(key: dict[str, Any], starts_from: str) -> None:
+def _validate_start_key(
+    key: dict[str, Any],
+    *,
+    fields: set[str],
+    equals: dict[str, str],
+    min_starts_at: str | None = None,
+) -> None:
     """A client-supplied start key must be exactly a key this query could have produced."""
     if (
-        set(key) != _START_KEY_FIELDS
+        set(key) != fields
         or not all(isinstance(v, str) for v in key.values())
-        or key["status"] != EventStatus.PUBLISHED.value
-        or key["startsAt"] < starts_from
+        or any(key[name] != expected for name, expected in equals.items())
+        or (min_starts_at is not None and key["startsAt"] < min_starts_at)
     ):
         raise InvalidPageTokenError("start key does not match this query")
+
+
+def _serialise(field: str, value: Any) -> Any:
+    if field == "starts_at":
+        return to_iso(value)
+    if field == "venue":
+        return {"name": value["name"], "city": value["city"]}
+    return value
 
 
 def _to_item(event: Event) -> dict[str, Any]:
