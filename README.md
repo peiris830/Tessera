@@ -15,7 +15,8 @@ It is a portfolio project combining software engineering and data engineering.
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the system diagram, the main request flow
-and the correctness rules. Design decisions are recorded in [docs/adr/](docs/adr/).
+and the correctness rules. Design decisions are recorded in [docs/adr/](docs/adr/), and
+[docs/build-log.md](docs/build-log.md) explains how it was built step by step and why.
 
 | Service | Owns | Responsibilities |
 |---|---|---|
