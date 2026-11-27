@@ -294,3 +294,72 @@ on-demand cost ≈ $0 at this traffic (free tier / pay per request), PITR about 
 **Verified:** 104 tests (spec drift, template policies, the moto table built from the template).
 `sam validate --lint` passed, and `sam build --use-container` succeeded: a 9.1 MB package with
 ARM binaries and no tests, venv or boto3.
+
+---
+
+## Step 3: AWS account setup and the shared platform stack
+
+**Built:** `infra/shared/template.yaml`, deployed as `tessera-dev-shared` in us-east-1. It
+contains the Cognito user pool, app client and the three role groups, the EventBridge bus,
+and the four SSM parameters from ADR 0002. 22 policy tests, `samconfig.toml` for repeatable
+deploys. This is the first step that created anything in AWS.
+
+**Account setup (done once, not in the repo):**
+- **CLI sign-in with `aws login`:** browser sign-in with the console password and MFA. The CLI
+  gets temporary credentials, so there's no long-lived access key on disk. A named **profile**
+  (`tessera-dev`) holds the identity and region; `$env:AWS_PROFILE` selects it per terminal.
+- **Permissions:** the dev user has `PowerUserAccess`, which allows everything except IAM.
+  That's enough for this stack (it has no IAM resources), but every Lambda needs an execution
+  role. The admin account therefore attached an inline policy, `tessera-deployer-iam`: manage only roles named
+  `tessera-*`, attach only four AWS-managed Lambda policies, and pass roles only to the
+  services this project uses. Broad IAM rights would make the dev user an admin in all but
+  name, since IAM can grant anything. The remaining gap (inline policies on `tessera-*` roles)
+  will be closed with a permissions boundary later.
+- **Budgets:** two already existed: a $1 zero-spend budget alerting at $0.01, and a $10
+  monthly budget alerting at 85%, 100% and 100% forecast. The first two budgets are free and
+  each extra one costs $0.02/day, so no new one was created.
+
+**Concepts:**
+- **Cognito user pool:** the user directory. At sign-in it issues an ID token (who you are),
+  an access token (sent to APIs) and a refresh token. Tokens carry `sub` and `cognito:groups`
+  and are signed with the pool's keys, which API Gateway checks.
+- **App client and auth flows:** the client ID is the access token's `client_id`, which the JWT
+  authorizers check as the audience. Only two sign-in flows are enabled. SRP lets the browser
+  prove it knows the password without sending it. Admin password auth needs AWS credentials,
+  so only scripts and tests can use it. Plain password sign-in is off.
+- **EventBridge bus:** services publish domain events and rules route them to targets. It's
+  created now so its name is fixed; publishing starts in Phase 3.
+- **Change sets:** `sam deploy` shows the planned Add/Modify/Delete list and waits for
+  confirmation. `Replacement: False` means a resource is updated in place and keeps its ID.
+- **IaC over the console:** the template is repeatable, reviewable, tested and deleted as one
+  unit. Changing managed resources by hand causes drift, so the console is for looking only.
+
+**Choices:**
+- **Lite tier, set explicitly:** new pools default to the pricier Essentials tier. Lite is
+  free up to 10,000 monthly active users.
+- **Admin-only user creation:** no public sign-up, so strangers can't create accounts or make
+  Cognito send email. Synthetic users come from a script. To be revisited for the attendee
+  portal.
+- **Security settings:** email sign-in (case-insensitive), 12-character minimum password,
+  optional authenticator-app MFA (SMS costs money), identical errors for "no such user" and
+  "wrong password", 60-minute access tokens, revocable refresh tokens.
+- **Plain CloudFormation:** there's no code to package, so no SAM transform. `sam deploy` still
+  deploys it, so every stack deploys the same way.
+
+**Problems hit:**
+- **The first deploy wrote the issuer URL as `https://https://cognito-idp...`.** The template
+  assumed Cognito's `ProviderURL` attribute had no scheme, but it already includes `https://`.
+  Every JWT authorizer would have rejected every token, because `iss` must match exactly. The
+  test had encoded the same wrong assumption, so it passed. Fixed with
+  `!GetAtt UserPool.ProviderURL`, redeployed (change set: one in-place Modify), and the test
+  now asserts the corrected form. Lesson: template tests check intent; only the deployed
+  values prove behaviour. The next step adds a token check against the real pool.
+- **VS Code's YAML extension flags `!Ref`/`!Sub` as unknown tags.** These are false alarms;
+  `sam validate --lint` is the real check.
+
+**Cost:** ≈ $0/month. Cognito Lite is free at this size, the bus is free with nothing
+published, and standard SSM parameters and CloudFormation are free.
+
+**Verified:** 22 tests and `sam validate --lint` pass. The stack shows `UPDATE_COMPLETE`. The
+SSM parameters hold the right values, with a single `https://` in the issuer. The pool shows
+the Lite tier, admin-only sign-up and optional MFA, and all three groups exist.

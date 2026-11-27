@@ -45,7 +45,8 @@ scripts/              synthetic data generator, seeding, backup/restore helpers
 
 Phase 1 (core platform) is in progress. The scaffold and architecture docs are done, and the
 [Catalogue](services/catalogue/) service is built and tested with its SAM template; it isn't
-deployed yet. The other services are still to come.
+deployed yet. The [shared platform stack](infra/shared/) (Cognito, EventBridge bus) is
+deployed to the dev environment. The other services are still to come.
 
 ## Prerequisites
 

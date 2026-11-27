@@ -1,0 +1,13 @@
+# `sam deploy` settings for the shared stack, so every deploy uses the same name and region.
+# No credentials here: the AWS profile comes from $env:AWS_PROFILE (e.g. tessera-dev).
+version = 0.1
+
+[default.global.parameters]
+stack_name = "tessera-dev-shared"
+region = "us-east-1"
+
+[default.deploy.parameters]
+parameter_overrides = "Env=dev"
+tags = "project=tessera env=dev"
+confirm_changeset = true        # show what will change and wait for "y" before applying
+fail_on_empty_changeset = false # re-running with no changes isn't an error

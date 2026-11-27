@@ -1,0 +1,203 @@
+# Tessera shared platform stack (ADR 0002): resources every service uses and none owns.
+#
+#   - Cognito user pool, app client and the three role groups (identity)
+#   - EventBridge bus for domain events (Phase 3 publishes to it; created now so its name is fixed)
+#   - SSM parameters publishing the IDs services need
+#
+# Deployed as tessera-<env>-shared, BEFORE any service stack, and torn down LAST.
+# Plain CloudFormation (no SAM Transform): there is no Lambda code here, so nothing for SAM to
+# expand. `sam deploy` still works with it, so every stack deploys the same way.
+# No IAM resources: deploying needs no CAPABILITY_IAM acknowledgement.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Tessera shared platform - Cognito user pool and groups, EventBridge bus, SSM parameters.
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: Deployment environment; used in resource names and SSM paths.
+
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+
+Resources:
+  # ---------------------------------------------------------------- identity
+  # A user pool is Cognito's user directory: it stores users, checks passwords and issues
+  # signed JWTs (ID, access and refresh tokens) that API Gateway verifies.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    # Deleting the pool deletes every user in it. dev users are synthetic and recreated by a
+    # script; prod is guarded by DeletionProtection below.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      UserPoolName: !Sub tessera-${Env}-users
+      # COST: Lite tier = first 10,000 monthly active users free, and enough features for us.
+      # Set explicitly because new pools otherwise default to the pricier Essentials tier.
+      UserPoolTier: LITE
+      UsernameAttributes: [email] # users sign in with their email address
+      UsernameConfiguration:
+        CaseSensitive: false # Alice@Example.com and alice@example.com are the same user
+      AutoVerifiedAttributes: [email]
+      # No public sign-up for now: only an administrator (our seed script) creates users.
+      # Stops strangers creating accounts and Cognito sending emails on their behalf.
+      # Revisited when the attendee portal is built.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12 # length matters more than character rules
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 3
+      # Users may add an authenticator app (TOTP). Free, unlike SMS codes.
+      MfaConfiguration: "OPTIONAL"
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      DeletionProtection: !If [IsProd, ACTIVE, INACTIVE]
+      UserPoolTags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+  # An app client is how an application talks to the pool. Its ID is the `client_id` claim in
+  # access tokens, which the services' JWT authorizers check as the audience.
+  AppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub tessera-${Env}-app
+      UserPoolId: !Ref UserPool
+      # Public client: the browser frontend can't keep a secret, so it doesn't get one.
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        # SRP: the browser proves it knows the password without ever sending it.
+        - ALLOW_USER_SRP_AUTH
+        # Admin password sign-in: only callable with AWS credentials (IAM), never from a
+        # browser. Used by scripts and end-to-end tests to get tokens for synthetic users.
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      # "User not found" and "wrong password" give the same error, so nobody can probe which
+      # emails have accounts.
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true # signing out invalidates the refresh token
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # Groups appear in tokens as the `cognito:groups` claim; services authorise on them.
+  AttendeeGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: attendee
+      Description: Browse events, reserve, pay (mock), hold, cancel and transfer tickets.
+      Precedence: 30 # only matters for IAM role mapping (unused); lower number wins
+
+  OrganiserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: organiser
+      Description: Create and manage their own events; see analytics for them.
+      Precedence: 20
+
+  VenueStaffGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: venue_staff
+      Description: Scan and validate tickets at entry.
+      Precedence: 10
+
+  # ---------------------------------------------------------------- domain events
+  # A custom bus keeps Tessera's events separate from the account's default bus (which carries
+  # AWS service events). COST: the bus is free; publishing is $1 per million events.
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub tessera-${Env}-bus
+      Description: Tessera domain events (EventCreated, HoldPlaced, TicketIssued, ...)
+      Tags:
+        - Key: project
+          Value: tessera
+        - Key: service
+          Value: shared
+        - Key: env
+          Value: !Ref Env
+
+  # ---------------------------------------------------------------- discovery (ADR 0002)
+  # Service stacks read these by name. Standard-tier String parameters are free.
+  UserPoolIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/cognito/user-pool-id
+      Type: String
+      Value: !Ref UserPool
+      Description: Cognito user pool ID
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+  AppClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/cognito/app-client-id
+      Type: String
+      Value: !Ref AppClient
+      Description: Cognito app client ID (the JWT audience services check)
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+  IssuerUrlParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/cognito/issuer-url
+      Type: String
+      # ProviderURL is already the full https://cognito-idp.<region>.amazonaws.com/<pool id>,
+      # exactly the `iss` claim in the pool's tokens. (Don't prefix https:// again.)
+      Value: !GetAtt UserPool.ProviderURL
+      Description: Cognito token issuer URL (the JWT `iss` services check)
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+  EventBusNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/eventbridge/bus-name
+      Type: String
+      Value: !Ref EventBus
+      Description: EventBridge bus for Tessera domain events
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+Outputs:
+  UserPoolId:
+    Description: Cognito user pool ID
+    Value: !Ref UserPool
+  AppClientId:
+    Description: Cognito app client ID
+    Value: !Ref AppClient
+  IssuerUrl:
+    Description: Cognito token issuer URL
+    Value: !GetAtt UserPool.ProviderURL
+  EventBusName:
+    Description: EventBridge bus name
+    Value: !Ref EventBus
