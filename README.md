@@ -50,8 +50,21 @@ deployed to the dev environment. The other services are still to come.
 
 ## Prerequisites
 
-*To be completed as the services are built.* Expected: Python 3.12, Docker, AWS CLI v2,
-AWS SAM CLI and an AWS account (free tier).
+Python 3.12, Docker, AWS CLI v2 (2.32+ for `aws login`), AWS SAM CLI and an AWS account.
+Each service and `infra/shared` has its own README with test and deploy commands.
+
+## Test users and end-to-end tests (PowerShell, repo root)
+
+```powershell
+py -3.12 -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install -r requirements-dev.txt
+$env:AWS_PROFILE = "tessera-dev"          # after: aws login --profile tessera-dev
+python scripts/seed_users.py              # synthetic users (attendee1/2, organiser1/2, staff1 @example.com)
+pytest                                    # tests/e2e against the deployed dev environment
+python scripts/seed_users.py --delete     # remove the users and their password parameter
+```
+
+The test users' password is random and stored only in SSM Parameter Store
+(`/tessera/dev/test-users/password`, SecureString).
 
 ## Data & secrets policy
 

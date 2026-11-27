@@ -1,0 +1,14 @@
+# Repo-level tooling: scripts/ and tests/e2e/ (each service has its own pyproject.toml).
+
+[tool.pytest.ini_options]
+testpaths = ["tests/e2e"]
+pythonpath = ["scripts"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["services", "infra"] # they have their own configs
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

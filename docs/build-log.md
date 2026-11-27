@@ -363,3 +363,63 @@ published, and standard SSM parameters and CloudFormation are free.
 **Verified:** 22 tests and `sam validate --lint` pass. The stack shows `UPDATE_COMPLETE`. The
 SSM parameters hold the right values, with a single `https://` in the issuer. The pool shows
 the Lite tier, admin-only sign-up and optional MFA, and all three groups exist.
+
+---
+
+## Step 3b: Synthetic test users and an end-to-end token check
+
+**Built:** `scripts/seed_users.py` and `scripts/synthetic_users.py`, which create five
+synthetic users in the dev pool. Also `tests/e2e/test_cognito_tokens.py`, 10 tests that
+sign those users in and verify their real tokens. Both use a root-level `.venv`
+(`requirements-dev.txt`, `pyproject.toml`).
+
+**Why:** the services trust only what API Gateway's JWT authorizer checks: signature, `iss`,
+audience and expiry. Step 3 showed that template tests can encode a wrong assumption (the
+`https://https://` issuer). These tests check the *deployed* pool the same way the authorizer
+will, before any service depends on it.
+
+**Users:** `attendee1`, `attendee2`, `organiser1`, `organiser2` and `staff1`, all
+`@example.com` (a domain reserved for examples, so no real person is involved). Each has
+exactly one group. The second attendee and organiser exist for the "someone else's
+resource" 403 tests.
+
+**Concepts:**
+- **SSM SecureString:** a parameter encrypted at rest with a KMS key. The AWS-managed `aws/ssm`
+  key is free. The test password is generated randomly, stored only there, and read back by
+  the script and the tests. It never appears in the repo, a file, shell history or output.
+  CloudFormation can't create SecureStrings, so the parameter lives outside the stack and
+  `seed_users.py --delete` removes it.
+- **JWKS:** a user pool publishes its public signing keys at
+  `<issuer>/.well-known/jwks.json`. Verifying a token means checking its signature with
+  those keys, then its claims. PyJWT does exactly what API Gateway does.
+- **Access token vs ID token:** an access token has `client_id` (no `aud`), and that's what the
+  authorizer checks as the audience. An ID token has `aud` equal to the client ID, plus `email`.
+  APIs receive access tokens.
+- **Admin-created users:** `MessageAction=SUPPRESS` sends no invitation email, and
+  `admin_set_user_password(Permanent=True)` skips the forced password change.
+
+**Choices:**
+- **Idempotent seeding:** re-running repairs passwords and group membership instead of failing.
+- **The script only accepts `--env dev`,** so synthetic users can't be seeded into prod.
+- **One module defines the users** for both the script and the tests, so they can't disagree.
+- **Named `synthetic_users.py`, not `test_users.py`,** because pytest treats `test_*.py`
+  files as test modules.
+
+**What the tests prove against the real pool:** for each user, the access token's signature
+verifies, `iss` equals the SSM issuer URL exactly, `client_id` equals the app client ID and
+`cognito:groups` is right. The ID token's audience is the client. Every user has a distinct
+`sub`. A wrong password and an unknown user get the same `NotAuthorizedException`. The
+plain-password flow is refused with `InvalidParameterException`, so the step 3 security
+setting is confirmed on the live pool, not just in the template.
+
+**Problems hit:**
+- **boto3 couldn't use `aws login` credentials** (`MissingDependencyException: botocore[crt]`).
+  The CLI bundles the AWS Common Runtime but the Python SDK doesn't. Fixed with
+  `boto3[crt]` in `requirements-dev.txt`.
+
+**Cost:** ≈ $0. Five monthly active users on the Lite tier (free up to 10,000), and one
+standard SecureString with the AWS-managed key (KMS calls well inside the free 20,000 per
+month).
+
+**Verified:** `seed_users.py` created all 5 users (`CONFIRMED`; groups 2/2/1); 10 e2e tests
+passed; the password parameter is a `SecureString`.
