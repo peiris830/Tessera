@@ -17,6 +17,7 @@ EXPECTED_SSM_PARAMETERS = {
     "/tessera/${Env}/cognito/user-pool-id",
     "/tessera/${Env}/cognito/app-client-id",
     "/tessera/${Env}/cognito/issuer-url",
+    "/tessera/${Env}/cognito/hosted-ui-url",  # read by scripts/frontend-env.ps1
     "/tessera/${Env}/eventbridge/bus-name",
     "/tessera/${Env}/artifacts/bucket-name",  # read by scripts/deploy.ps1
 }
@@ -55,8 +56,22 @@ def props(logical_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- user pool
 
 
-def test_only_admins_can_create_users():
-    assert props("UserPool")["AdminCreateUserConfig"]["AllowAdminCreateUserOnly"] is True
+def test_self_sign_up_requires_email_verification_with_free_sender():
+    pool = props("UserPool")
+    assert pool["AdminCreateUserConfig"]["AllowAdminCreateUserOnly"] is False  # hybrid rule
+    assert pool["AutoVerifiedAttributes"] == ["email"]
+    assert pool["EmailConfiguration"] == {"EmailSendingAccount": "COGNITO_DEFAULT"}
+    assert "{####}" in pool["VerificationMessageTemplate"]["EmailMessage"]
+
+
+def test_self_registered_users_become_attendees_via_post_confirmation_trigger():
+    function = props("PostConfirmationFunction")
+    (event,) = function["Events"].values()
+    assert event == {
+        "Type": "Cognito",
+        "Properties": {"UserPool": {"!Ref": "UserPool"}, "Trigger": "PostConfirmation"},
+    }
+    assert 'GROUP = "attendee"' in function["InlineCode"]
 
 
 def test_user_pool_uses_free_lite_tier():
@@ -109,6 +124,65 @@ def test_tokens_are_short_lived_and_revocable():
     assert client["EnableTokenRevocation"] is True
     assert client["TokenValidityUnits"]["AccessToken"] == "minutes"
     assert client["AccessTokenValidity"] <= 60
+
+
+def test_oauth_allows_only_the_code_flow_with_minimal_scopes():
+    client = props("AppClient")
+    assert client["AllowedOAuthFlowsUserPoolClient"] is True
+    assert client["AllowedOAuthFlows"] == ["code"]  # never "implicit" (tokens in the URL)
+    assert set(client["AllowedOAuthScopes"]) == {"openid", "email"}
+    assert client["SupportedIdentityProviders"] == ["COGNITO"]
+
+
+def test_redirect_urls_are_parameters_defaulting_to_the_dev_server():
+    client = props("AppClient")
+    params = template()["Parameters"]
+    assert client["CallbackURLs"] == {"!Ref": "CallbackUrls"}
+    assert client["LogoutURLs"] == {"!Ref": "LogoutUrls"}
+    assert params["CallbackUrls"]["Default"] == "http://localhost:5173/auth/callback"
+    assert params["LogoutUrls"]["Default"] == "http://localhost:5173/"
+    for name in ("CallbackUrls", "LogoutUrls"):
+        assert "*" not in params[name]["Default"]
+
+
+# ---------------------------------------------------------------- hosted login page
+
+
+def test_domain_prefix_is_derived_from_the_stack_id_and_uses_the_classic_ui():
+    domain = props("UserPoolDomain")
+    template_str, variables = domain["Domain"]["!Sub"]
+    assert template_str == "tessera-${Env}-${Suffix}"
+    assert "AWS::StackId" in str(variables["Suffix"])  # no account ID or name in the URL
+    assert domain["ManagedLoginVersion"] == 1  # classic hosted UI: free on the Lite tier
+
+
+def test_login_page_css_uses_only_cognito_customizable_classes():
+    style = template()["Resources"]["LoginPageStyle"]
+    assert style["DependsOn"] == "UserPoolDomain"
+    selectors = [rule.split("{")[0].strip() for rule in style["Properties"]["CSS"].split("}")]
+    for selector in filter(None, selectors):
+        assert selector.split(":")[0].endswith("-customizable"), selector
+
+
+# ---------------------------------------------------------------- sign-up trigger
+
+
+def test_trigger_can_only_add_users_to_groups():
+    (policy,) = props("PostConfirmationFunction")["Policies"]
+    (statement,) = policy["Statement"]
+    assert statement["Effect"] == "Allow"
+    assert statement["Action"] == ["cognito-idp:AdminAddUserToGroup"]
+    assert statement["Resource"] == {
+        "!Sub": "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
+    }
+
+
+def test_trigger_is_small_fast_and_logs_with_retention():
+    function = props("PostConfirmationFunction")
+    assert function["MemorySize"] == 128
+    assert function["Timeout"] <= 5  # Cognito gives triggers 5 seconds
+    assert function["LoggingConfig"]["LogGroup"] == {"!Ref": "PostConfirmationLogGroup"}
+    assert "RetentionInDays" in props("PostConfirmationLogGroup")
 
 
 # ---------------------------------------------------------------- groups
@@ -202,9 +276,11 @@ def test_artifacts_bucket_refuses_plain_http():
 # ---------------------------------------------------------------- hygiene
 
 
-def test_no_iam_resources():
-    """Keeps the stack deployable without CAPABILITY_IAM and within PowerUserAccess."""
+def test_the_trigger_is_the_only_thing_needing_iam():
+    """No hand-written IAM: the one role is SAM's, generated for the trigger function."""
     assert not [r for r in template()["Resources"].values() if r["Type"].startswith("AWS::IAM::")]
+    functions = resources_of_type("AWS::Serverless::Function")
+    assert set(functions) == {"PostConfirmationFunction"}
 
 
 @pytest.mark.parametrize(
@@ -215,6 +291,8 @@ def test_no_iam_resources():
         ("UserPoolIdParameter", "Tags"),
         ("AppClientIdParameter", "Tags"),
         ("IssuerUrlParameter", "Tags"),
+        ("HostedUiUrlParameter", "Tags"),
+        ("PostConfirmationFunction", "Tags"),
         ("EventBusNameParameter", "Tags"),
         ("ArtifactsBucket", "Tags"),
         ("ArtifactsBucketParameter", "Tags"),

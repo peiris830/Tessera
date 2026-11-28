@@ -9,5 +9,6 @@ region = "us-east-1"
 [default.deploy.parameters]
 parameter_overrides = "Env=dev"
 tags = "project=tessera env=dev"
+capabilities = "CAPABILITY_IAM" # the sign-up trigger's IAM role (SAM-generated, tessera-dev-shared-*)
 confirm_changeset = true        # show what will change and wait for "y" before applying
 fail_on_empty_changeset = false # re-running with no changes isn't an error

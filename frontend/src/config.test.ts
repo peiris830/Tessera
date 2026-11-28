@@ -2,21 +2,24 @@ import { ConfigError, loadConfig } from './config'
 
 const complete = {
   VITE_CATALOGUE_API_URL: 'https://api.example.test/',
-  VITE_COGNITO_USER_POOL_ID: 'us-east-1_example',
-  VITE_COGNITO_APP_CLIENT_ID: 'exampleclientid',
+  VITE_COGNITO_AUTHORITY: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example',
+  VITE_COGNITO_CLIENT_ID: 'exampleclientid',
+  VITE_COGNITO_HOSTED_UI_URL: 'https://tessera-dev-0123abcd.auth.us-east-1.amazoncognito.com/',
 }
 
-test('reads the configuration and strips a trailing slash from the API URL', () => {
+test('reads the configuration and strips trailing slashes from URLs', () => {
   expect(loadConfig(complete)).toEqual({
     catalogueApiUrl: 'https://api.example.test',
-    cognitoUserPoolId: 'us-east-1_example',
-    cognitoAppClientId: 'exampleclientid',
+    cognitoAuthority: 'https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example',
+    cognitoClientId: 'exampleclientid',
+    cognitoHostedUiUrl: 'https://tessera-dev-0123abcd.auth.us-east-1.amazoncognito.com',
   })
 })
 
 test('names every missing variable and how to fix it', () => {
-  expect(() => loadConfig({ VITE_COGNITO_USER_POOL_ID: 'x' })).toThrow(ConfigError)
+  expect(() => loadConfig({ VITE_COGNITO_CLIENT_ID: 'x' })).toThrow(ConfigError)
   expect(() => loadConfig({})).toThrow(
-    /VITE_CATALOGUE_API_URL, VITE_COGNITO_USER_POOL_ID, VITE_COGNITO_APP_CLIENT_ID.*frontend-env/,
+    /VITE_CATALOGUE_API_URL, VITE_COGNITO_AUTHORITY, VITE_COGNITO_CLIENT_ID, VITE_COGNITO_HOSTED_UI_URL.*frontend-env/,
   )
 })
+

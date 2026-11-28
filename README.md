@@ -44,10 +44,10 @@ scripts/              synthetic data generator, seeding, backup/restore helpers
 ## Status
 
 Phase 1 (core platform) is in progress. The scaffold and architecture docs are done, and the
-[shared platform stack](infra/shared/) (Cognito, EventBridge bus) and the
+[shared platform stack](infra/shared/) (Cognito with a hosted login page and self sign-up, EventBridge bus) and the
 [Catalogue](services/catalogue/) service are deployed to the dev environment and covered by
-end-to-end tests. The [frontend](frontend/) has its shell, theme and split-view layout (with
-sample data until sign-in is connected). The other services are still to come.
+end-to-end tests. Browsing events is public. The [frontend](frontend/) has its shell, theme and
+split-view layout (with sample data until sign-in is connected in the app). The other services are still to come.
 
 ## Prerequisites
 
@@ -60,6 +60,7 @@ Each service and `infra/shared` has its own README with test and deploy commands
 aws login --profile tessera-dev; $env:AWS_PROFILE = "tessera-dev"
 .\scripts\deploy.ps1 shared       # first: Cognito, event bus, artifacts bucket, SSM parameters
 .\scripts\deploy.ps1 catalogue    # sam build (Docker running) + sam deploy
+.\scripts\frontend-env.ps1         # frontend/.env.local from SSM (after either deploy)
 ```
 
 Each deploy shows a CloudFormation change set and waits for confirmation.
@@ -79,7 +80,9 @@ The test users' password is random and stored only in SSM Parameter Store
 
 ## Data & secrets policy
 
-Synthetic data only, and no personal data in logs or the data lake. Secrets live in SSM
+Test, load and analytics data is synthetic. Real people may sign up (as attendees only); their
+email stays in Cognito and never appears in the repo, logs, events or the data lake, which use
+Cognito's user ID instead. Secrets live in SSM
 Parameter Store / Secrets Manager, never in the repo. Payments go only through the mock
 payment service.
 

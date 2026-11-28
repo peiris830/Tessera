@@ -1,17 +1,19 @@
 # Tessera shared platform stack (ADR 0002): resources every service uses and none owns.
 #
-#   - Cognito user pool, app client and the three role groups (identity)
+#   - Cognito user pool, app client, the three role groups, hosted login page (identity)
+#   - Post-confirmation trigger: self-registered users become attendees
 #   - EventBridge bus for domain events (Phase 3 publishes to it; created now so its name is fixed)
 #   - S3 bucket for deployment artifacts (the zipped code `sam deploy` uploads)
 #   - SSM parameters publishing the IDs services need
 #
 # Deployed as tessera-<env>-shared, BEFORE any service stack, and torn down LAST.
-# Plain CloudFormation (no SAM Transform): there is no Lambda code here, so nothing for SAM to
-# expand. `sam deploy` still works with it, so every stack deploys the same way.
-# No IAM resources: deploying needs no CAPABILITY_IAM acknowledgement.
+# Uses the SAM Transform for the one small Lambda (the sign-up trigger). Its code is inline in
+# this file: this stack creates the artifacts bucket, so it can't upload code to it first.
+# The trigger's IAM role means deploying needs CAPABILITY_IAM (set in samconfig.toml).
 
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Tessera shared platform - Cognito user pool and groups, EventBridge bus, SSM parameters.
+Transform: AWS::Serverless-2016-10-31
+Description: Tessera shared platform - Cognito (users, groups, login page, sign-up trigger), EventBridge bus, artifacts bucket, SSM parameters.
 
 Parameters:
   Env:
@@ -19,6 +21,18 @@ Parameters:
     Default: dev
     AllowedValues: [dev, prod]
     Description: Deployment environment; used in resource names and SSM paths.
+  CallbackUrls:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173/auth/callback
+    Description: Where Cognito may send users back after sign-in (exact match; add the hosted site later).
+  LogoutUrls:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173/
+    Description: Where Cognito may send users after sign-out.
+  LogRetentionDays:
+    Type: Number
+    Default: "14"
+    Description: How long the sign-up trigger's logs are kept.
 
 Conditions:
   IsProd: !Equals [!Ref Env, prod]
@@ -41,12 +55,22 @@ Resources:
       UsernameAttributes: [email] # users sign in with their email address
       UsernameConfiguration:
         CaseSensitive: false # Alice@Example.com and alice@example.com are the same user
-      AutoVerifiedAttributes: [email]
-      # No public sign-up for now: only an administrator (our seed script) creates users.
-      # Stops strangers creating accounts and Cognito sending emails on their behalf.
-      # Revisited when the attendee portal is built.
+      AutoVerifiedAttributes: [email] # sign-up sends a code; the account works once confirmed
+      # Self sign-up is on (hybrid data rule, CLAUDE.md): real people can register from the
+      # login page and become attendees via the post-confirmation trigger below. Synthetic
+      # test users (any role) are still created by scripts/seed_users.py.
       AdminCreateUserConfig:
-        AllowAdminCreateUserOnly: true
+        AllowAdminCreateUserOnly: false
+      # COST: Cognito's built-in email sender is free but capped at 50 emails/day; enough for
+      # a demo. (Amazon SES lifts the cap, at a cost, if ever needed.)
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailSubject: Your Tessera verification code
+        EmailMessage: >-
+          Your Tessera verification code is {####}. Tessera is a demo project: we store your
+          email only to sign you in, and never share it or use it in analytics.
       Policies:
         PasswordPolicy:
           MinimumLength: 12 # length matters more than character rules
@@ -95,6 +119,115 @@ Resources:
         AccessToken: minutes
         IdToken: minutes
         RefreshToken: days
+      # OAuth 2.0 for the frontend: the hosted login page sends the browser back to a callback
+      # URL with a one-time code, which the app exchanges (with its PKCE verifier) for tokens.
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code] # authorization code only; the implicit flow puts tokens in URLs
+      AllowedOAuthScopes: [openid, email] # groups are already in the access token
+      CallbackURLs: !Ref CallbackUrls # Cognito refuses to redirect anywhere not listed here
+      LogoutURLs: !Ref LogoutUrls
+      SupportedIdentityProviders: [COGNITO] # the pool's own users (no Google/SAML sign-in)
+
+  # The hosted login page's address: https://<prefix>.auth.<region>.amazoncognito.com.
+  # Prefixes are unique across all AWS accounts, so ours ends with the first 8 hex characters
+  # of this stack's unique ID: stable for the stack's lifetime, never clashing, no account
+  # details in the URL. (Hex can't spell "aws"/"amazon"/"cognito", which Cognito forbids.)
+  # COST: free.
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub
+        - tessera-${Env}-${Suffix}
+        - Suffix: !Select [0, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]
+      ManagedLoginVersion: 1 # 1 = classic hosted UI (free on Lite); 2 = managed login
+
+  # Classic hosted UI styling. Cognito only accepts its own *-customizable classes and a
+  # limited set of properties; it can't load fonts, so the page uses system fonts.
+  # Colours from frontend/src/app/theme.ts (aegean palette).
+  LoginPageStyle:
+    Type: AWS::Cognito::UserPoolUICustomizationAttachment
+    DependsOn: UserPoolDomain # customisation needs the domain to exist
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref AppClient
+      CSS: >-
+        .background-customizable { background-color: #f4f7fd; }
+        .banner-customizable { background-color: #003f8c; padding: 16px 0px 16px 0px; }
+        .label-customizable { color: #1f2a3d; font-weight: 600; }
+        .textDescription-customizable { color: #1f2a3d; font-size: 15px; }
+        .inputField-customizable { border-radius: 6px; border-color: #aec6ff; }
+        .inputField-customizable:focus { border-color: #004fad; }
+        .submitButton-customizable { background-color: #004fad; border-color: #004fad; border-radius: 6px; font-weight: 600; }
+        .submitButton-customizable:hover { background-color: #003f8c; border-color: #003f8c; }
+        .redirect-customizable { color: #004fad; }
+        .errorMessage-customizable { border-radius: 6px; }
+
+  # ---------------------------------------------------------------- sign-up trigger
+  # Cognito calls this Lambda after a user confirms their email (and before their first
+  # tokens), so a self-registered user's very first token already says "attendee".
+  # Only self sign-ups: admin-created synthetic users get their roles from the seed script,
+  # and the same trigger also fires after a forgotten-password reset, which is ignored.
+  # COST: a few invocations a month; well inside Lambda's free tier.
+  PostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub tessera-${Env}-post-confirmation
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: index.handler
+      MemorySize: 128 # one API call; the smallest size is plenty
+      Timeout: 5 # Cognito waits at most 5 seconds for a trigger
+      LoggingConfig:
+        LogGroup: !Ref PostConfirmationLogGroup
+      # Inline because this stack owns the artifacts bucket (see the header). Tested by
+      # tests/test_post_confirmation.py, which runs exactly this code.
+      InlineCode: |
+        import logging
+
+        import boto3
+
+        GROUP = "attendee"
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        cognito = boto3.client("cognito-idp")
+
+
+        def handler(event, context):
+            if event["triggerSource"] != "PostConfirmation_ConfirmSignUp":
+                return event  # e.g. PostConfirmation_ConfirmForgotPassword
+            cognito.admin_add_user_to_group(
+                UserPoolId=event["userPoolId"], Username=event["userName"], GroupName=GROUP
+            )
+            # userName is Cognito's generated ID (we sign in by email), never the email itself.
+            logger.info("self-registered user added to %s: %s", GROUP, event["userName"])
+            return event  # Cognito expects the event back
+      # Least privilege: one action. The pool can't be named here (it references this
+      # function, and CloudFormation forbids cycles), so it's this account's pools in this
+      # region; the code only ever uses the pool from Cognito's own event.
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [cognito-idp:AdminAddUserToGroup]
+              Resource: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+      Events:
+        SignUpConfirmed:
+          Type: Cognito # SAM wires the pool's LambdaConfig and lets Cognito invoke the function
+          Properties:
+            UserPool: !Ref UserPool
+            Trigger: PostConfirmation
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
+  PostConfirmationLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/tessera-${Env}-post-confirmation
+      RetentionInDays: !Ref LogRetentionDays
 
   # Groups appear in tokens as the `cognito:groups` claim; services authorise on them.
   AttendeeGroup:
@@ -240,6 +373,18 @@ Resources:
         service: shared
         env: !Ref Env
 
+  HostedUiUrlParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/cognito/hosted-ui-url
+      Type: String
+      Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
+      Description: Cognito hosted login page base URL (the frontend's sign-out endpoint lives here)
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
   EventBusNameParameter:
     Type: AWS::SSM::Parameter
     Properties:
@@ -277,6 +422,9 @@ Outputs:
   IssuerUrl:
     Description: Cognito token issuer URL
     Value: !GetAtt UserPool.ProviderURL
+  HostedUiUrl:
+    Description: Cognito hosted login page base URL
+    Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
   EventBusName:
     Description: EventBridge bus name
     Value: !Ref EventBus

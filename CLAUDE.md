@@ -14,8 +14,11 @@
   Firehose, Glue, Athena) the first time they appear.
 - Stop and ask before anything that costs money or is hard to undo (deploying, creating
   AWS resources, deleting stacks or data). Prefer free-tier-friendly options.
-- Never commit secrets, tokens, real personal data or `.env` files. Synthetic data only;
-  payments only through the mock payment service.
+- Never commit secrets, tokens, real personal data or `.env` files. Payments only through the
+  mock payment service.
+- Data is hybrid: test, load and analytics data is synthetic (`@example.com` users from the
+  seed script). Real people may self-register, as attendees only; their email stays in
+  Cognito, never in the repo, logs, events or the data lake (use the Cognito `sub` as user ID).
 - Dev machine: Windows, VS Code, Python, Git, Docker. Give PowerShell-compatible commands.
 - Finish one phase properly (working, tested, documented) before starting the next.
 - Keep `docs/build-log.md` up to date: at the end of every step, add an entry (what was
@@ -142,6 +145,14 @@ README.md                overview, prerequisites, config variable names, deploy/
 - Sign-in (5b): Cognito classic hosted UI + OAuth 2.0 authorization code + PKCE (option B1,
   free on Lite tier); tokens per tab (sessionStorage); access token sent to APIs.
 - Browsing is public (no sign-in); writes and drafts require auth.
+- 5b-2 (agreed): Cognito domain = auto prefix `tessera-<env>-<8 hex from stack ID>` (classic
+  hosted UI, `ManagedLoginVersion: 1`); OAuth code flow only, scopes `openid email`,
+  callback/logout URLs as template parameters; tokens unchanged (60 min / 7 days).
+  Self sign-up ON (hybrid data rule): email verification by code (Cognito default sender,
+  50/day), post-confirmation Lambda adds self-registered users to `attendee`; organiser and
+  staff only via the seed script. Login page styled with blue CSS only (no logo, no fonts).
+  Frontend config: committed `frontend/.env.example` + `scripts/frontend-env.ps1` writing
+  gitignored `.env.local` from SSM.
 - Unsplash photos in 5e; organiser photo upload later.
 ## Current status
 - [x] Phase 1 â€“ Step 1: repo scaffold + architecture diagram (docs/architecture.md, ADR 0001)
@@ -161,10 +172,12 @@ README.md                overview, prerequisites, config variable names, deploy/
     `http://localhost:5173`) + token-less `OPTIONS /v1/{proxy+}` route (app answers 204;
     without it the JWT catch-all 401s preflights), OpenAPI security per operation,
     frontend types regenerated
-  - [ ] 5b-2: shared stack: Cognito domain (prefix), app client OAuth (code flow, scopes
-    openid/email, callback `http://localhost:5173/auth/callback`, logout `http://localhost:5173/`),
-    classic hosted UI CSS in Tessera blue, SSM param for the domain; `scripts/frontend-env.ps1`
-    writes `frontend/.env.local` from SSM
+  - [x] 5b-2 (deployed, 25 e2e pass): shared stack (now SAM + CAPABILITY_IAM): Cognito
+    domain, app client OAuth, classic hosted UI CSS, self sign-up + inline post-confirmation
+    trigger `tessera-dev-post-confirmation` (→ attendee), SSM `cognito/hosted-ui-url`;
+    `frontend/.env.example` + `scripts/frontend-env.ps1`; config.ts reads
+    VITE_CATALOGUE_API_URL, VITE_COGNITO_AUTHORITY, VITE_COGNITO_CLIENT_ID,
+    VITE_COGNITO_HOSTED_UI_URL. Privacy note only in the verification email so far.
   - [ ] 5b-3: frontend sign-in (oidc-client-ts + react-oidc-context, PKCE, sessionStorage),
     user menu, role-aware nav (My events for organisers), bearer token on API calls,
     Cognito logout endpoint
@@ -177,6 +190,9 @@ README.md                overview, prerequisites, config variable names, deploy/
 - [ ] Later (Phase 2/4): organiser event photo upload: S3 presigned PUT URL endpoint, imageKey
   on events, type/size validation, resize Lambda, serve via CloudFront; generated mosaic covers
   stay as fallback. List costs first (S3 ~$0.023/GB-month, CloudFront free tier).
+- [ ] Later (before sharing the hosted app): "delete my account" for self-registered users,
+  privacy note shown before sign-up, cleanup of never-confirmed sign-ups, bot protection
+  (Cognito threat protection needs the Plus tier: list costs or use a free alternative)
 - [ ] Later: IAM permissions boundary capping `tessera-*` roles the dev user creates
   (closes the inline-policy gap in the `tessera-deployer-iam` policy)
 - Note: venv uses `py -3.12` (PATH python is 3.10). SAM CLI, AWS CLI, Docker installed;

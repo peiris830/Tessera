@@ -11,7 +11,7 @@
 
 .EXAMPLE
     $env:AWS_PROFILE = "tessera-dev"
-    .\scripts\deploy.ps1 shared       # infra/shared (no code, so no build or bucket needed)
+    .\scripts\deploy.ps1 shared       # infra/shared (only inline code, so no build or bucket needed)
     .\scripts\deploy.ps1 catalogue    # services/catalogue: sam build, then sam deploy
 #>
 param(

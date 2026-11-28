@@ -12,7 +12,9 @@ React + TypeScript single-page app built with Vite, Mantine, TanStack Query and 
 
 - [x] 5a: app shell, theme, split-view layout, routes, mosaic covers, typed Catalogue client;
       pages use **sample data** (`src/features/events/fixtures.ts`) until 5c/5d
-- [ ] 5b: CORS on the API, Cognito sign-in, role-aware navigation
+- [x] 5b-1: public browsing + CORS on the API
+- [x] 5b-2: Cognito login page, OAuth settings, self sign-up; config from SSM
+- [ ] 5b-3: sign-in in the app, role-aware navigation
 - [ ] 5c: browse + event details from the live API
 - [ ] 5d: organiser console (create, edit, publish) on the live API
 - [ ] 5e: Unsplash cover photos (backend proxy, picker, attribution)
@@ -20,6 +22,9 @@ React + TypeScript single-page app built with Vite, Mantine, TanStack Query and 
 ## Commands (PowerShell, from this folder)
 
 ```powershell
+# once per deployment: writes .env.local from SSM
+$env:AWS_PROFILE = "tessera-dev"; ..\scripts\frontend-env.ps1
+
 npm install
 npm run dev          # http://localhost:5173
 npm test             # Vitest (jsdom)
@@ -43,5 +48,5 @@ npm run check:api    # fails if the generated types are out of date
 | `src/lib/` | `datetime.ts` (local time + zone), `mosaic.ts` (cover pattern) |
 | `src/api/catalogue.schema.ts` | **Generated** Catalogue API types; don't edit by hand |
 | `src/api/catalogue.ts` | Typed `openapi-fetch` client; adds an `X-Correlation-Id` to every request |
-| `src/config.ts` | Reads and validates `VITE_*` settings (from `.env.local`, gitignored) |
+| `src/config.ts` | Reads and validates `VITE_*` settings: `.env.local` (gitignored) is written by `scripts/frontend-env.ps1` from SSM; names in `.env.example` |
 | `src/test/` | Test setup (browser API stubs) and `renderAt` helper |
