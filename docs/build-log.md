@@ -560,3 +560,94 @@ capped by its expiry rule.
 - **In AWS:** the deployed function's code comes from the new bucket. All 16 e2e tests passed.
   Logs since the redeploy come only from the `catalogue` logger. The managed stack is
   `DELETE_COMPLETE`, and the new bucket is the only one in the account.
+
+---
+
+## Step 5a: Frontend foundation: React + TypeScript + Mantine, split-view layout
+
+**Built:** the app in `frontend/`, ADR 0005, and `docs/design/ui-style.md`. It contains:
+- **Stack:** Vite, React 19, TypeScript 5.9, Mantine 9, TanStack Query, React Router.
+- **Shell:** a slim header with navigation and a light/dark toggle.
+- **Pages:** browse events and My events, both built on a **split view** (list + detail pane),
+  plus a create/edit form and a 404 page.
+- **Mosaic covers:** generated per event.
+- **A typed Catalogue client** generated from `openapi.yaml`.
+
+The pages use clearly labelled **sample data** until sign-in (5b) and the live API (5c/5d).
+
+**How the decisions were made:** after the first scaffold I'd chosen the libraries myself,
+without discussing them; that was pointed out, and we went through each decision:
+- **Mantine** over plain CSS, Tailwind or shadcn, for ready-made accessible forms, tables,
+  dates and modals with theming.
+- **TanStack Query** over hand-written fetching.
+- **React Router** over TanStack Router: the industry standard, with typed routes as the
+  trade-off.
+- **One app with role-aware navigation.**
+
+A **design study in Google Stitch** produced every screen at desktop and mobile size. Its
+tokens (deep blue `#004FAD`, blue-tinted neutrals, an amber accent, 4–24px spacing) became the
+Mantine theme. Its screens were corrected where they contradicted the API: no Edit on
+cancelled events, capacity locked only after publishing, a cancelled state on the details
+page.
+
+"Less whitespace" first sounded like "make everything smaller". It actually meant **put empty
+space to work**. Hence the split view: the selected event fills the right pane, and an idle
+pane shows a summary rather than a blank box. Filters and counts sit above lists, and row
+actions appear on hover.
+
+**Concepts:**
+- **Single-page app:** one HTML page plus a JS bundle. React renders each view and `fetch`es
+  the APIs. `npm run build` writes static files for S3.
+- **Typed client from OpenAPI:** Python models → `openapi.yaml` → TypeScript types
+  (`openapi-typescript`) → `openapi-fetch` calls, so a backend change breaks the frontend
+  build instead of failing in the browser. `npm run check:api` catches a forgotten
+  regeneration.
+- **Routing state in the URL:** `/events/:eventId` and `/organiser/events/:eventId` choose what
+  the detail pane shows, so refresh, links and the back button work.
+- **`VITE_*` config:** only prefixed variables reach the bundle, and everything in a bundle is
+  public, so they hold IDs, never secrets.
+- **Deterministic generated art:** an FNV-1a hash of the event ID seeds a small random-number
+  generator (mulberry32), so the same event always gets the same mosaic and nothing is stored.
+- **React purity:** components must give the same output for the same input. The linter
+  rejected `Date.now()` during render, so time-dependent filtering moved into event handlers.
+
+**Choices:**
+- **Times are shown in the viewer's local time with the zone offset**
+  (`12 Jul 2027, 19:30 GMT+5:30`); events have no venue time zone yet.
+- **Fonts:** Plus Jakarta Sans + JetBrains Mono, **self-hosted** via `@fontsource`, so no
+  request goes to Google Fonts. **Icons:** Tabler, imported per icon.
+- **Covers:** generated mosaics now (free). **Unsplash photos are planned as step 5e,** after
+  sign-in and the live organiser console: an organiser-only backend search proxy with the key
+  in SSM, the photo saved on the event, attribution, and the mosaic as fallback. Organiser
+  photo upload (S3 presigned URLs) is on the to-do list.
+- **The UI mirrors server rules** (hides Edit on cancelled events, locks capacity) but never
+  replaces them.
+
+**Problems hit:**
+- **`npm create vite@latest web -- --template react-ts` produced a non-React app.** Windows
+  PowerShell removes a bare `--`, so npm ate `--template`. Fixed by quoting it: `'--'`.
+- **`openapi-typescript` requires TypeScript 5** (`peer typescript@"^5.x"`), but create-vite
+  now defaults to TypeScript 7, the native compiler without the JS API. Pinned 5.9 rather than
+  forcing the install.
+- **Mantine in jsdom needs stubs** for `matchMedia`, `ResizeObserver` and `document.fonts`
+  (the auto-growing textarea).
+- **Node's ICU formats UTC as `GMT+0`** where browsers show `GMT`; it's normalised.
+- **The bundle is ~215 KB gzipped** (Mantine + dates + router + query). Code splitting is
+  planned when hosting.
+
+**Cost:** none. Everything runs locally.
+
+**Verified:** `tsc` clean, oxlint clean (warnings fail), 17 Vitest tests pass:
+- redirect and placeholder pane;
+- selecting an event fills the detail pane;
+- search filtering;
+- no Edit on cancelled events, Publish only on drafts;
+- capacity locked for published events;
+- form validation messages;
+- 404;
+- date formatting in three zones;
+- mosaic determinism;
+- config validation;
+- correlation IDs.
+
+`check:api` passes and the production build succeeds.

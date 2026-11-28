@@ -191,3 +191,4 @@ Decisions are recorded as ADRs in [docs/adr/](adr/):
 | [0002](adr/0002-shared-platform-stack.md) | Shared resources (Cognito, EventBridge bus) in `infra/shared/`; outputs published via SSM Parameter Store |
 | [0003](adr/0003-capacity-counter-initialisation.md) | Reservation creates each event's capacity counter on first reservation, fetching capacity from Catalogue once |
 | [0004](adr/0004-mock-payment-iam-auth.md) | Mock Payment is an internal HTTP API protected by IAM; Reservation signs requests with SigV4 |
+| [0005](adr/0005-frontend-react-typescript-vite.md) | Frontend: React + TypeScript SPA (Vite, Mantine, TanStack Query, React Router); API types generated from OpenAPI |

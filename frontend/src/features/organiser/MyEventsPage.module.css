@@ -1,0 +1,27 @@
+.row {
+  cursor: pointer;
+}
+
+.row[data-selected] {
+  background: var(--mantine-primary-color-light);
+  box-shadow: inset 3px 0 0 var(--mantine-primary-color-filled);
+}
+
+/* Row actions: hidden at rest, shown on hover, keyboard focus or selection. */
+.actions {
+  opacity: 0;
+  transition: opacity 100ms ease-out;
+}
+
+.row:hover .actions,
+.row:focus-within .actions,
+.row[data-selected] .actions {
+  opacity: 1;
+}
+
+/* Touch screens have no hover: always show the actions. */
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+  }
+}

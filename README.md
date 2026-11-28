@@ -46,7 +46,8 @@ scripts/              synthetic data generator, seeding, backup/restore helpers
 Phase 1 (core platform) is in progress. The scaffold and architecture docs are done, and the
 [shared platform stack](infra/shared/) (Cognito, EventBridge bus) and the
 [Catalogue](services/catalogue/) service are deployed to the dev environment and covered by
-end-to-end tests. The other services and the frontend are still to come.
+end-to-end tests. The [frontend](frontend/) has its shell, theme and split-view layout (with
+sample data until sign-in is connected). The other services are still to come.
 
 ## Prerequisites
 
