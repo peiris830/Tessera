@@ -1,4 +1,4 @@
-import { createCatalogueClient } from './catalogue'
+import { bearerToken, createCatalogueClient } from './catalogue'
 
 test('every request carries a fresh correlation ID', async () => {
   const seen: string[] = []
@@ -17,4 +17,20 @@ test('every request carries a fresh correlation ID', async () => {
   expect(seen).toHaveLength(2)
   expect(seen[0]).toMatch(/^[0-9a-f-]{36}$/)
   expect(seen[0]).not.toBe(seen[1])
+})
+
+test('signed-in requests carry the access token; signed-out ones carry none', async () => {
+  const seen: (string | null)[] = []
+  const fetchStub = async (request: Request) => {
+    seen.push(request.headers.get('Authorization'))
+    return new Response('{"items":[],"nextToken":null}', { headers: { 'Content-Type': 'application/json' } })
+  }
+  let token: string | undefined = 'abc.def.ghi'
+  const client = createCatalogueClient('https://api.example.test', bearerToken(async () => token))
+
+  await client.GET('/v1/events', { fetch: fetchStub })
+  token = undefined
+  await client.GET('/v1/events', { fetch: fetchStub })
+
+  expect(seen).toEqual(['Bearer abc.def.ghi', null])
 })

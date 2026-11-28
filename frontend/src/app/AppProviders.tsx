@@ -7,9 +7,9 @@ import { theme } from './theme'
 /**
  * App-wide providers: Mantine (theme, light/dark), TanStack Query (server-data cache) and
  * toast notifications. The router is added by the caller (BrowserRouter in main.tsx,
- * MemoryRouter in tests).
+ * MemoryRouter in tests). Tests pass env="test", which turns off Mantine's transitions.
  */
-export function AppProviders({ children }: { children: ReactNode }) {
+export function AppProviders({ children, env }: { children: ReactNode; env?: 'default' | 'test' }) {
   // One cache per app instance (created once, not on every render).
   const [queryClient] = useState(
     () =>
@@ -19,7 +19,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   )
 
   return (
-    <MantineProvider theme={theme} defaultColorScheme="auto">
+    <MantineProvider theme={theme} defaultColorScheme="auto" env={env}>
       <QueryClientProvider client={queryClient}>
         <Notifications position="top-right" />
         {children}

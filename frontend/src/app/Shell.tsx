@@ -1,28 +1,21 @@
-import {
-  ActionIcon,
-  AppShell,
-  Burger,
-  Button,
-  Drawer,
-  Group,
-  Stack,
-  Tooltip,
-  useComputedColorScheme,
-  useMantineColorScheme,
-} from '@mantine/core'
+import { AppShell, Burger, Button, Drawer, Group, Stack } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { IconMoon, IconSun } from '@tabler/icons-react'
 import { NavLink, Outlet } from 'react-router'
+import { type Role, hasRole, useSession } from '../auth/session'
 import { Logo } from '../components/Logo'
+import { AccountControls } from './AccountControls'
 
-// 5b: links are filtered by the signed-in user's Cognito groups (organisers also see My events).
-const NAV = [
+// Links with a role only show for users in that Cognito group (a convenience, not security:
+// the organiser routes are guarded and the API enforces roles).
+const NAV: { to: string; label: string; role?: Role }[] = [
   { to: '/events', label: 'Browse events' },
-  { to: '/organiser/events', label: 'My events' },
+  { to: '/organiser/events', label: 'My events', role: 'organiser' },
 ]
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
-  return NAV.map((item) => (
+  const session = useSession()
+  const visible = NAV.filter((item) => !item.role || hasRole(session, item.role))
+  return visible.map((item) => (
     <NavLink key={item.to} to={item.to} onClick={onNavigate} style={{ textDecoration: 'none' }}>
       {({ isActive }) => (
         <Button
@@ -40,18 +33,6 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   ))
 }
 
-function ColorSchemeToggle() {
-  const { setColorScheme } = useMantineColorScheme()
-  const scheme = useComputedColorScheme('light')
-  const next = scheme === 'dark' ? 'light' : 'dark'
-  return (
-    <Tooltip label={`Switch to ${next} mode`}>
-      <ActionIcon variant="default" size="lg" aria-label={`Switch to ${next} mode`} onClick={() => setColorScheme(next)}>
-        {scheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
-      </ActionIcon>
-    </Tooltip>
-  )
-}
 
 /** Application frame: slim header with role-aware navigation; pages render in the main area. */
 export function Shell() {
@@ -70,13 +51,7 @@ export function Shell() {
               <NavLinks />
             </Group>
           </Group>
-          <Group gap="sm" wrap="nowrap">
-            <ColorSchemeToggle />
-            {/* 5b: user menu (email, role, sign out) replaces this */}
-            <Button variant="default" size="xs" disabled>
-              Sign in
-            </Button>
-          </Group>
+          <AccountControls />
         </Group>
       </AppShell.Header>
 

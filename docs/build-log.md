@@ -775,3 +775,70 @@ typecheck, lint and 17 tests. E2E against AWS: 25 tests pass, including the 5 ne
   (`redirect_mismatch`);
 - invoking the deployed trigger for a temporary synthetic user (no email sent; deleted
   afterwards) puts it in `attendee`.
+## Phase 1 – Step 5b-3: sign-in in the frontend
+
+**What:** the app signs people in with Cognito's hosted login page and knows who they are.
+- **Signed out:** a **Sign in** button, the colour-scheme toggle, and an ⓘ popover with the
+  privacy note (new accounts are attendee accounts; the email is stored only to sign in).
+  New users sign up from Cognito's page.
+- **Signed in:** an avatar menu with the email, role badge(s), dark/light mode and **Sign out**.
+- **Role-aware navigation:** "My events" only for organisers. Direct visits to
+  `/organiser/...` show a sign-in panel (signed out) or "Organisers only" (attendee).
+- **`/auth/callback`** finishes sign-in and returns the user to the page they started from.
+- **`bearerToken` middleware** adds the access token to API calls; pages adopt it in 5c/5d.
+- A missing `.env.local` now shows how to fix it instead of a blank page.
+
+**Decisions (agreed before building):** single Sign in button (privacy note in a popover
+beside it), silent token refresh, full sign-out, hide-and-explain for organiser pages,
+return to the original page, roles for the UI from the ID token.
+
+**Concepts:**
+- **oidc-client-ts + react-oidc-context:** the library generates the PKCE verifier and
+  challenge, stores the in-flight request, exchanges the code at Cognito's token endpoint and
+  keeps the tokens in sessionStorage (this tab only).
+- **Discovery + metadata seed:** the library reads `<issuer>/.well-known/openid-configuration`
+  for Cognito's endpoints. Cognito doesn't list its revoke and logout endpoints there, so
+  they're supplied (`metadataSeed` takes priority over the discovered values).
+- **Silent refresh:** shortly before the 60-minute access token expires, the refresh token
+  gets a new one with no redirect. A tab reopened after expiry tries once; if that fails,
+  the user is signed out and told.
+- **Full sign-out has three parts:** revoke the refresh token (so it can't mint new access
+  tokens), forget the tab's tokens, and visit Cognito's `/logout` (ending its login cookie,
+  otherwise the next "Sign in" would skip the password). Cognito's logout takes its own
+  parameters (`client_id`, `logout_uri`), not the OIDC standard ones.
+- **UI roles are a convenience, not security:** hiding a link doesn't stop anyone typing the
+  URL, and a user could edit their token in the browser. The API verifies every token and
+  enforces roles itself.
+- **Open-redirect protection:** the return address travels through Cognito in `state`; only
+  same-site paths are accepted (`//evil.example` and `/\evil.example` are rejected).
+- **A `Session` interface of our own:** components use `useSession()`, never the library, so
+  tests pass a fake session (`renderAt(ui, route, organiser())`) and the library stays in
+  one file.
+
+**Problems hit:**
+- **oxlint flagged `setState` inside an effect** (the "renewing" flag): a ref now guards the
+  one-off refresh instead, and the status derives from the token's own `expired` flag.
+- **oxlint's fast-refresh rule** moved the non-component helpers to `auth/oidc.ts`.
+- **Mantine's menu transition** left menu items hidden from Testing Library's role queries in
+  jsdom. Tests now render with `MantineProvider env="test"`, which turns transitions off.
+- **The bundle grew to ~245 KB gzipped** (+30 KB for the OIDC libraries); code splitting is
+  still planned for hosting.
+
+**Cost:** none. Sign-ins are Cognito Lite monthly active users (10,000 free).
+
+**Verified:** typecheck, oxlint, 41 Vitest tests (24 new):
+- the sign-in settings match the app client;
+- the logout URL;
+- roles from groups;
+- the return-path guard against open redirects;
+- signed-out, attendee and organiser headers and nav;
+- the privacy note;
+- the sign-out call;
+- the guard panels and the loading state;
+- the callback returning to the original page, ignoring a tampered address and showing
+  errors;
+- the bearer token present when signed in, absent when signed out.
+
+The production build succeeds. **Manual check in the browser:** signing in as `organiser1` through
+the hosted login page works and returns to the organiser console. Self sign-up through the
+login page is still to be tried by hand.

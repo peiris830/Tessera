@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { renderAt } from '../test/render'
+import { organiser, renderAt } from '../test/render'
 import App from './App'
 
 test('the home page redirects to upcoming events with a useful placeholder pane', async () => {
@@ -27,7 +27,7 @@ test('search filters the event list', async () => {
 })
 
 test('organisers cannot edit cancelled events and can only publish drafts', async () => {
-  renderAt(<App />, '/organiser/events')
+  renderAt(<App />, '/organiser/events', organiser())
   const cancelled = screen.getByText('Spring Brass Matinee').closest('tr')!
   expect(within(cancelled).queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument()
   const published = screen.getByText('Summer Jazz Night').closest('tr')!
@@ -37,7 +37,7 @@ test('organisers cannot edit cancelled events and can only publish drafts', asyn
 })
 
 test('editing a published event locks capacity', async () => {
-  renderAt(<App />, '/organiser/events/sample-1')
+  renderAt(<App />, '/organiser/events/sample-1', organiser())
   expect(await screen.findByRole('heading', { name: 'Edit event' })).toBeInTheDocument()
   expect(screen.getByLabelText(/^Capacity/, { selector: 'input' })).toBeDisabled()
   expect(screen.getByLabelText('Capacity locked')).toBeInTheDocument()
@@ -45,7 +45,7 @@ test('editing a published event locks capacity', async () => {
 
 test('the create form reports invalid input', async () => {
   const user = userEvent.setup()
-  renderAt(<App />, '/organiser/events/new')
+  renderAt(<App />, '/organiser/events/new', organiser())
   await user.click(await screen.findByRole('button', { name: 'Create draft' }))
   expect(screen.getByText('Title is required')).toBeInTheDocument()
   expect(screen.getByText('Start date and time must be in the future')).toBeInTheDocument()

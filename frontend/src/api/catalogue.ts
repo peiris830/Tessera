@@ -22,6 +22,21 @@ export const correlationId: Middleware = {
   },
 }
 
+/**
+ * Adds `Authorization: Bearer <access token>` when someone is signed in. Public routes
+ * (browsing) work without it; API Gateway's JWT authorizer checks it on protected routes.
+ * The token is read per request, so a silently refreshed token is picked up immediately.
+ */
+export function bearerToken(getAccessToken: () => Promise<string | undefined>): Middleware {
+  return {
+    async onRequest({ request }) {
+      const token = await getAccessToken()
+      if (token) request.headers.set('Authorization', `Bearer ${token}`)
+      return request
+    },
+  }
+}
+
 export function createCatalogueClient(baseUrl: string, ...middleware: Middleware[]) {
   const client = createClient<paths>({ baseUrl })
   client.use(correlationId, ...middleware)

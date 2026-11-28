@@ -47,7 +47,8 @@ Phase 1 (core platform) is in progress. The scaffold and architecture docs are d
 [shared platform stack](infra/shared/) (Cognito with a hosted login page and self sign-up, EventBridge bus) and the
 [Catalogue](services/catalogue/) service are deployed to the dev environment and covered by
 end-to-end tests. Browsing events is public. The [frontend](frontend/) has its shell, theme and
-split-view layout (with sample data until sign-in is connected in the app). The other services are still to come.
+split-view layout, and signs people in with Cognito (pages still show sample data until they
+are connected to the live API). The other services are still to come.
 
 ## Prerequisites
 

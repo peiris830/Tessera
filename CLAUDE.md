@@ -153,6 +153,12 @@ README.md                overview, prerequisites, config variable names, deploy/
   staff only via the seed script. Login page styled with blue CSS only (no logo, no fonts).
   Frontend config: committed `frontend/.env.example` + `scripts/frontend-env.ps1` writing
   gitignored `.env.local` from SSM.
+- 5b-3 (agreed): single "Sign in" button (sign-up via Cognito's page; privacy note in a
+  popover on an info icon beside it); silent token refresh, notification if it fails; full
+  sign-out (revoke + Cognito /logout); organiser pages hidden from nav for non-organisers,
+  direct visits show a sign-in or "Organisers only" panel; return to the original page after
+  sign-in; roles for UI from the ID token's `cognito:groups` (server still enforces); user
+  menu with email, role, colour-scheme toggle, sign out.
 - Unsplash photos in 5e; organiser photo upload later.
 ## Current status
 - [x] Phase 1 â€“ Step 1: repo scaffold + architecture diagram (docs/architecture.md, ADR 0001)
@@ -178,9 +184,11 @@ README.md                overview, prerequisites, config variable names, deploy/
     `frontend/.env.example` + `scripts/frontend-env.ps1`; config.ts reads
     VITE_CATALOGUE_API_URL, VITE_COGNITO_AUTHORITY, VITE_COGNITO_CLIENT_ID,
     VITE_COGNITO_HOSTED_UI_URL. Privacy note only in the verification email so far.
-  - [ ] 5b-3: frontend sign-in (oidc-client-ts + react-oidc-context, PKCE, sessionStorage),
-    user menu, role-aware nav (My events for organisers), bearer token on API calls,
-    Cognito logout endpoint
+  - [x] 5b-3 (41 Vitest tests; organiser sign-in checked by hand in the browser; self
+    sign-up via the login page not yet tried by hand): `src/auth/` (session.ts interface + useSession, oidc.ts settings,
+    OidcSessionProvider bridge, AuthCallbackPage, RequireOrganiser), AccountControls (Sign in
+    + privacy popover / user menu), role-aware nav, `bearerToken` middleware (wired to pages
+    in 5c/5d), tests use `renderAt(ui, route, organiser())` with Mantine `env="test"`
   - [ ] 5c: live browse (public, no sign-in) Â· 5d: live organiser console
   - [ ] 5e: Unsplash cover photos via organiser-only backend proxy (key in SSM SecureString,
     cover URL restricted to images.unsplash.com, attribution, mosaic fallback)

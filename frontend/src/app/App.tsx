@@ -1,4 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router'
+import { AuthCallbackPage } from '../auth/AuthCallbackPage'
+import { RequireOrganiser } from '../auth/RequireOrganiser'
 import { NotFoundPage } from '../features/errors/NotFoundPage'
 import { BrowseEventsPage } from '../features/events/BrowseEventsPage'
 import { MyEventsPage } from '../features/organiser/MyEventsPage'
@@ -15,9 +17,12 @@ export default function App() {
         <Route index element={<Navigate to="/events" replace />} />
         <Route path="events" element={<BrowseEventsPage />} />
         <Route path="events/:eventId" element={<BrowseEventsPage />} />
-        <Route path="organiser/events" element={<MyEventsPage />} />
-        <Route path="organiser/events/new" element={<MyEventsPage />} />
-        <Route path="organiser/events/:eventId" element={<MyEventsPage />} />
+        <Route path="auth/callback" element={<AuthCallbackPage />} />
+        <Route element={<RequireOrganiser />}>
+          <Route path="organiser/events" element={<MyEventsPage />} />
+          <Route path="organiser/events/new" element={<MyEventsPage />} />
+          <Route path="organiser/events/:eventId" element={<MyEventsPage />} />
+        </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

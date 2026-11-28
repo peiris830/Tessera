@@ -14,7 +14,7 @@ React + TypeScript single-page app built with Vite, Mantine, TanStack Query and 
       pages use **sample data** (`src/features/events/fixtures.ts`) until 5c/5d
 - [x] 5b-1: public browsing + CORS on the API
 - [x] 5b-2: Cognito login page, OAuth settings, self sign-up; config from SSM
-- [ ] 5b-3: sign-in in the app, role-aware navigation
+- [x] 5b-3: sign-in in the app (hosted login page, PKCE), user menu, role-aware navigation
 - [ ] 5c: browse + event details from the live API
 - [ ] 5d: organiser console (create, edit, publish) on the live API
 - [ ] 5e: Unsplash cover photos (backend proxy, picker, attribution)
@@ -47,6 +47,8 @@ npm run check:api    # fails if the generated types are out of date
 | `src/features/errors/` | 404 page |
 | `src/lib/` | `datetime.ts` (local time + zone), `mosaic.ts` (cover pattern) |
 | `src/api/catalogue.schema.ts` | **Generated** Catalogue API types; don't edit by hand |
-| `src/api/catalogue.ts` | Typed `openapi-fetch` client; adds an `X-Correlation-Id` to every request |
+| `src/api/catalogue.ts` | Typed `openapi-fetch` client; adds an `X-Correlation-Id` to every request and, via `bearerToken`, the access token when signed in |
+| `src/auth/` | Sign-in: `session.ts` (the `Session` interface components use), `oidc.ts` (Cognito settings), `OidcSessionProvider` (library bridge, silent refresh, sign-out), `AuthCallbackPage`, `RequireOrganiser` |
+| `src/app/AccountControls.tsx` | Header: Sign in + privacy note, or the user menu |
 | `src/config.ts` | Reads and validates `VITE_*` settings: `.env.local` (gitignored) is written by `scripts/frontend-env.ps1` from SSM; names in `.env.example` |
 | `src/test/` | Test setup (browser API stubs) and `renderAt` helper |
