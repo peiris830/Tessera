@@ -26,6 +26,7 @@ the change → `409`. Identity comes only from API Gateway's verified JWT claims
 - [x] 2b: DynamoDB model, repository, public read endpoints
 - [x] 2c: authentication/roles/ownership, organiser endpoints (create, update, publish, list own)
 - [x] 2d: OpenAPI spec (generated, drift-tested), SAM template (table, function, API, logs)
+- [x] 4: deployed to dev (`tessera-dev-catalogue`); e2e smoke tests in `tests/e2e/`
 
 ## Data model (`events` table)
 
@@ -55,10 +56,16 @@ uvicorn app.main:app --reload --port 8001 --app-dir src   # then open http://127
 
 ```powershell
 sam validate --lint              # check template.yaml (local, no AWS calls needed)
-sam build --use-container        # build inside AWS's Python 3.12 Lambda image (needs Docker)
+sam build                        # in AWS's Python 3.12 arm64 build image (needs Docker running)
+
+$env:AWS_PROFILE = "tessera-dev"
+sam deploy                       # samconfig.toml: stack tessera-dev-catalogue, us-east-1;
+                                 # shows the change set and asks before applying
+sam delete --stack-name tessera-dev-catalogue   # teardown (deletes the table and its data)
 ```
 
-Deploying needs the shared stack (Cognito SSM parameters) first; see the project build log.
+Deploy the shared stack (`infra/shared`) first: this template reads its Cognito SSM
+parameters. End-to-end tests for the deployed API live in `tests/e2e/` at the repo root.
 
 Tests use **moto** (in-memory fake AWS) with fake credentials, so they never touch a real
 account. Running the server locally serves `/v1/health`; the events endpoints need a real

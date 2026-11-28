@@ -423,3 +423,69 @@ month).
 
 **Verified:** `seed_users.py` created all 5 users (`CONFIRMED`; groups 2/2/1); 10 e2e tests
 passed; the password parameter is a `SecureString`.
+
+---
+
+## Step 4: Catalogue deployed to AWS, with end-to-end smoke tests
+
+**Built:** `services/catalogue/samconfig.toml` and `tests/e2e/test_catalogue_api.py`. The
+Catalogue is now deployed as stack `tessera-dev-catalogue`: table, function, IAM role, HTTP
+API with the JWT authorizer, log groups, and the SSM API URL. This is the first real service
+running in AWS.
+
+**Concepts:**
+- **What `sam build` does:** it reads the template, chooses AWS's build image for the runtime
+  and architecture (`build-python3.12:latest-arm64`), and runs pip inside it against `src/`.
+  The code and Linux/ARM libraries land in `.aws-sam/build/`. Docker is needed only for this
+  build: the zip must contain binaries for Lambda's OS and CPU (pydantic-core is compiled),
+  which a Windows pip install wouldn't produce. GitHub Actions will take this over in Phase 4.
+- **What `sam deploy` does:** it zips the build, uploads it to S3, swaps `CodeUri` for the S3
+  address, then creates and runs a change set. `resolve_s3 = true` let SAM create its own
+  bucket (stack `aws-sam-cli-managed-default`). Its odd name is CloudFormation auto-naming:
+  stack name + logical ID + a random suffix, because bucket names are global across all accounts.
+- **`CAPABILITY_IAM`:** an explicit acknowledgement that the stack creates IAM resources (the
+  execution role). It's set in `samconfig.toml`.
+- **Idle costs almost nothing:** Lambda, API Gateway and on-demand DynamoDB bill per request.
+  Only storage (PITR, logs, the S3 artifacts) bills while idle, at fractions of a cent. There's
+  nothing to "pause"; `sam delete` removes everything, and a redeploy takes about 2 minutes.
+
+**What the smoke tests prove against the deployed API (with real Cognito tokens):**
+- `/v1/health` is public. No token gets API Gateway's own 401; a forged token gets 401.
+- `X-Correlation-Id` sent by the client comes back and appears in every log line.
+- An attendee gets 403 `FORBIDDEN` when creating events.
+- **Full lifecycle:**
+  - organiser1 creates a DRAFT (201 + `Location`);
+  - the attendee and organiser2 get 404 on it;
+  - organiser1 publishes it, and everyone can see it;
+  - organiser2 gets 403 `NOT_EVENT_OWNER` on PATCH;
+  - it appears in the attendee's browse list and in organiser1's `/organisers/me/events`, not
+    organiser2's.
+- The test deletes its events from the table directly afterwards (dev only).
+
+**Observed in AWS:**
+- **Access log:** the 401 line has `authorizerError: "missing: token not provided"`, so it was
+  rejected before Lambda ran.
+- **Function logs:** one JSON line per request with `correlationId`, path only, and no IPs.
+- **Latency:** a cold start of about 1.4 s (`Init Duration`) on the first request; warm
+  requests about 75 ms at API Gateway.
+- **The table:** PITR `ENABLED`, and empty after the tests.
+
+**Problems hit and known limitations:**
+- **API Gateway's 401 body is `{"message":"Unauthorized"}`,** not our error format. HTTP APIs
+  can't customise authorizer responses (REST APIs can). Accepted, and asserted in the test so
+  a change would be noticed.
+- **A CloudWatch log search seemed to find nothing.** Windows PowerShell 5.1 strips embedded
+  double quotes from arguments to native programs, which broke the filter pattern. The logs
+  were fine. For JSON logs, use `{ $.correlationId = "..." }` patterns, or the console's Logs
+  Insights.
+- **Log noise:** `mangum.http` repeats each request and `botocore.credentials` logs at INFO.
+  To be quietened in the next step.
+- **The SAM-managed artifact bucket keeps every deploy's zip forever** (versioning, no
+  lifecycle rule). It will be replaced by our own bucket in the shared stack.
+
+**Cost:** about $0.00–0.02/month: PITR and S3 artifact storage, fractions of a cent each.
+Everything else is per request and within free tiers.
+
+**Verified:** the change set had 10 `+ Add` rows and the stack shows `CREATE_COMPLETE`. All 16
+e2e tests passed on the first run (10 Cognito, 6 Catalogue). Logs, PITR and table cleanup were
+checked in AWS.
