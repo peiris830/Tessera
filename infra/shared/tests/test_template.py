@@ -18,6 +18,7 @@ EXPECTED_SSM_PARAMETERS = {
     "/tessera/${Env}/cognito/app-client-id",
     "/tessera/${Env}/cognito/issuer-url",
     "/tessera/${Env}/eventbridge/bus-name",
+    "/tessera/${Env}/artifacts/bucket-name",  # read by scripts/deploy.ps1
 }
 
 
@@ -155,6 +156,49 @@ def test_catalogue_reads_parameters_this_stack_writes():
         assert f"/tessera/dev/{name}" in catalogue
 
 
+# ---------------------------------------------------------------- artifacts bucket
+
+
+def test_artifacts_bucket_name_is_unique_without_random_suffix():
+    assert props("ArtifactsBucket")["BucketName"] == {
+        "!Sub": "tessera-${Env}-artifacts-${AWS::AccountId}-${AWS::Region}"
+    }
+
+
+def test_artifacts_bucket_blocks_all_public_access():
+    block = props("ArtifactsBucket")["PublicAccessBlockConfiguration"]
+    assert block == {
+        "BlockPublicAcls": True,
+        "BlockPublicPolicy": True,
+        "IgnorePublicAcls": True,
+        "RestrictPublicBuckets": True,
+    }
+    rules = props("ArtifactsBucket")["OwnershipControls"]["Rules"]
+    assert rules == [{"ObjectOwnership": "BucketOwnerEnforced"}]  # ACLs disabled
+
+
+def test_artifacts_bucket_is_encrypted():
+    config = props("ArtifactsBucket")["BucketEncryption"]["ServerSideEncryptionConfiguration"]
+    assert config[0]["ServerSideEncryptionByDefault"]["SSEAlgorithm"] in {"AES256", "aws:kms"}
+
+
+def test_old_artifacts_expire_but_not_before_rollback_could_need_them():
+    (rule,) = props("ArtifactsBucket")["LifecycleConfiguration"]["Rules"]
+    assert rule["Status"] == "Enabled"
+    assert 60 <= rule["ExpirationInDays"] <= 365
+    assert rule["AbortIncompleteMultipartUpload"]["DaysAfterInitiation"] <= 7
+
+
+def test_artifacts_bucket_refuses_plain_http():
+    policy = props("ArtifactsBucketPolicy")
+    assert policy["Bucket"] == {"!Ref": "ArtifactsBucket"}
+    (statement,) = policy["PolicyDocument"]["Statement"]
+    assert statement["Effect"] == "Deny"
+    assert statement["Principal"] == "*"
+    assert statement["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
+    assert {"!Sub": "${ArtifactsBucket.Arn}/*"} in statement["Resource"]
+
+
 # ---------------------------------------------------------------- hygiene
 
 
@@ -172,6 +216,8 @@ def test_no_iam_resources():
         ("AppClientIdParameter", "Tags"),
         ("IssuerUrlParameter", "Tags"),
         ("EventBusNameParameter", "Tags"),
+        ("ArtifactsBucket", "Tags"),
+        ("ArtifactsBucketParameter", "Tags"),
     ],
 )
 def test_resources_are_tagged_for_cost_tracking(logical_id: str, tags_key: str):

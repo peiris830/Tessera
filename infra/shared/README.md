@@ -9,6 +9,7 @@ CloudFormation stack `tessera-<env>-shared` for resources every service uses and
 | App client | `tessera-dev-app` | Public (no secret); SRP for browsers, admin password auth for scripts/tests |
 | Groups | `attendee`, `organiser`, `venue_staff` | Arrive in tokens as `cognito:groups` |
 | EventBridge bus | `tessera-dev-bus` | Domain events (Phase 3) |
+| Artifacts bucket | `tessera-dev-artifacts-<account>-<region>` | Code uploaded by `sam deploy`; public access blocked, HTTPS only, expires after 90 days |
 
 ## Published SSM parameters (the contract services rely on)
 
@@ -18,22 +19,34 @@ CloudFormation stack `tessera-<env>-shared` for resources every service uses and
 | `/tessera/<env>/cognito/app-client-id` | App client ID (JWT audience) |
 | `/tessera/<env>/cognito/issuer-url` | `https://cognito-idp.<region>.amazonaws.com/<pool id>` (JWT `iss`) |
 | `/tessera/<env>/eventbridge/bus-name` | Event bus name |
+| `/tessera/<env>/artifacts/bucket-name` | Artifacts bucket (read by `scripts/deploy.ps1`) |
 
 ## Cost
 
 ≈ $0: Cognito Lite is free up to 10,000 monthly active users, the event bus is free (publishing
-costs $1 per million events), standard SSM parameters and CloudFormation are free.
+costs $1 per million events), standard SSM parameters and CloudFormation are free. The artifacts
+bucket holds a few MB (fractions of a cent), capped by the 90-day expiry.
 
-## Commands (PowerShell, from this folder)
+## Commands (PowerShell)
 
 ```powershell
+# from this folder: tests and checks
 py -3.12 -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install -r requirements-dev.txt
 pytest                         # template policy tests
 sam validate --lint            # SAM + cfn-lint checks (local)
 
+# from the repo root: deploy (shows the change set and asks before applying)
 $env:AWS_PROFILE = "tessera-dev"
-sam deploy                     # uses samconfig.toml; shows the change set and asks before applying
+.\scripts\deploy.ps1 shared
 aws ssm get-parameters-by-path --path /tessera/dev --recursive --query "Parameters[].[Name,Value]" --output table
-
-sam delete --stack-name tessera-dev-shared   # teardown (deletes all users); service stacks first
 ```
+
+**Teardown** (delete service stacks first; this deletes all users):
+
+```powershell
+aws s3 rm "s3://$(aws ssm get-parameter --name /tessera/dev/artifacts/bucket-name --query Parameter.Value --output text)" --recursive
+sam delete --stack-name tessera-dev-shared
+```
+
+CloudFormation can't delete a non-empty bucket, hence emptying it first (the bucket isn't
+versioned, so `aws s3 rm` removes everything).

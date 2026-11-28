@@ -42,6 +42,11 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
+# Third-party loggers that repeat our own access log line ("GET /v1/events 200" from mangum)
+# or report routine details ("Found credentials..." from botocore). Warnings still get through.
+QUIET_LOGGERS = ("mangum", "botocore", "boto3", "urllib3")
+
+
 def configure_logging(service: str, level: str = "INFO") -> None:
     """Replace any existing root handlers (Lambda pre-installs one) with a JSON handler."""
     handler = logging.StreamHandler(sys.stdout)
@@ -49,3 +54,5 @@ def configure_logging(service: str, level: str = "INFO") -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
+    for name in QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

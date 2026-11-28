@@ -1,5 +1,6 @@
 # `sam build` / `sam deploy` settings for the Catalogue stack.
 # No credentials here: the AWS profile comes from $env:AWS_PROFILE (e.g. tessera-dev).
+# Deploy with:  .\scripts\deploy.ps1 catalogue   (from the repo root)
 version = 0.1
 
 [default.global.parameters]
@@ -15,9 +16,8 @@ tags = "project=tessera service=catalogue env=dev"
 # The stack creates an IAM role (the function's execution role); CloudFormation requires
 # an explicit acknowledgement of that.
 capabilities = "CAPABILITY_IAM"
-# Let SAM create and reuse its own S3 bucket (stack aws-sam-cli-managed-default) for the
-# zipped code it uploads before CloudFormation creates the function.
-resolve_s3 = true
+# The zipped code goes to the shared stack's artifacts bucket. Its name includes the account
+# ID, so it isn't committed here: deploy with scripts/deploy.ps1, which passes --s3-bucket.
 s3_prefix = "tessera-dev-catalogue"
 confirm_changeset = true        # show the change set and wait for "y"
 fail_on_empty_changeset = false # re-running with no changes isn't an error

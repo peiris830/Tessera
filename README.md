@@ -53,6 +53,16 @@ end-to-end tests. The other services and the frontend are still to come.
 Python 3.12, Docker, AWS CLI v2 (2.32+ for `aws login`), AWS SAM CLI and an AWS account.
 Each service and `infra/shared` has its own README with test and deploy commands.
 
+## Deploying (PowerShell, repo root)
+
+```powershell
+aws login --profile tessera-dev; $env:AWS_PROFILE = "tessera-dev"
+.\scripts\deploy.ps1 shared       # first: Cognito, event bus, artifacts bucket, SSM parameters
+.\scripts\deploy.ps1 catalogue    # sam build (Docker running) + sam deploy
+```
+
+Each deploy shows a CloudFormation change set and waits for confirmation.
+
 ## Test users and end-to-end tests (PowerShell, repo root)
 
 ```powershell

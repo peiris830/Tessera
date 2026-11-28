@@ -58,9 +58,10 @@ uvicorn app.main:app --reload --port 8001 --app-dir src   # then open http://127
 sam validate --lint              # check template.yaml (local, no AWS calls needed)
 sam build                        # in AWS's Python 3.12 arm64 build image (needs Docker running)
 
+# from the repo root: build + deploy (reads the artifacts bucket from SSM; shows the change
+# set and asks before applying). samconfig.toml: stack tessera-dev-catalogue, us-east-1.
 $env:AWS_PROFILE = "tessera-dev"
-sam deploy                       # samconfig.toml: stack tessera-dev-catalogue, us-east-1;
-                                 # shows the change set and asks before applying
+.\scripts\deploy.ps1 catalogue
 sam delete --stack-name tessera-dev-catalogue   # teardown (deletes the table and its data)
 ```
 

@@ -489,3 +489,74 @@ Everything else is per request and within free tiers.
 **Verified:** the change set had 10 `+ Add` rows and the stack shows `CREATE_COMPLETE`. All 16
 e2e tests passed on the first run (10 Cognito, 6 Catalogue). Logs, PITR and table cleanup were
 checked in AWS.
+
+---
+
+## Step 4b: Own artifacts bucket, deploy script, quieter logs
+
+**Built:**
+- **An S3 artifacts bucket in the shared stack** (`tessera-<env>-artifacts-<account>-<region>`),
+  with its bucket policy and the SSM parameter `/tessera/<env>/artifacts/bucket-name`.
+- **`scripts/deploy.ps1`** (`shared` | `catalogue`).
+- **Quieter third-party loggers** in the Catalogue.
+- **The SAM-managed bucket stack was removed.** ADR 0002 gained an Amendments section.
+
+**Why:**
+- **The SAM-managed bucket turned on versioning with no lifecycle rule,** so every deploy's
+  zip stayed forever, and it wasn't tagged as part of Tessera.
+- **Our bucket is defined in IaC, tested and capped.** It lives in the shared stack because
+  every service uses it and none owns it (ADR 0002).
+
+**Concepts:**
+- **Global bucket names:** S3 bucket names are unique across all AWS accounts. CloudFormation
+  auto-names add a random suffix (`...-samclisourcebucket-czm8iguivi6j`); adding the account
+  ID and region gives a readable name that is still unique.
+- **Bucket policy (resource-based policy):** attached to the bucket, and it applies to every
+  caller. Ours is a single explicit `Deny` when `aws:SecureTransport` is false. An explicit Deny
+  beats any Allow in AWS's policy evaluation, so no IAM permission can override it.
+- **Public access block + `BucketOwnerEnforced`:** the bucket can't be made public, whatever a
+  later policy says. ACLs (the older per-object permission system) are switched off.
+- **Lifecycle rule:** objects expire after 90 days. Not shorter: rolling back a failed update
+  needs the *previous* deploy's zip. Unfinished multipart uploads are cleaned up after 1 day.
+- **Change set details: `Static` vs `Dynamic`.** The Catalogue redeploy listed `CatalogueApi`
+  as Modify. `describe-change-set` showed `Body`, `Evaluation: Dynamic`, caused by
+  `CatalogueFunction.Arn`. The API definition references the function's ARN, and CloudFormation
+  can't prove in advance that an updated function keeps its ARN. A code update never changes
+  it, so the API was untouched. Lesson: read the details and the cause, not just the row count.
+
+**Choices:**
+- **The bucket name includes the account ID, so it stays out of committed config.**
+  `samconfig.toml` no longer has `resolve_s3`, which means a plain `sam deploy` refuses to run.
+  `deploy.ps1` checks the caller identity, reads the bucket from SSM, and runs `sam build` and
+  `sam deploy --s3-bucket ...`, stopping at the first failure (PowerShell's
+  `$ErrorActionPreference` doesn't cover exit codes from programs like `sam`, so the script
+  checks `$LASTEXITCODE` itself).
+- **Quieter loggers:** `mangum`, `botocore`, `boto3` and `urllib3` are set to WARNING. Mangum
+  repeated our access line ("GET /v1/events 200") and botocore logged "Found credentials".
+
+**Problems hit:**
+- **Docker Desktop's engine stopped responding** (`500 Internal Server Error ... check if the
+  server supports the requested API version`), although the app was open and its WSL VMs
+  were running. The backend log showed the real cause: `connect tcp 192.168.65.7:2375: no
+  route to host`, meaning the network link into the engine VM was broken. The "API version"
+  wording was misleading. The tray "Restart" didn't restart the processes (their start time
+  was unchanged). Fixed by fully restarting Docker Desktop, with `wsl --shutdown` if needed.
+  The installed version (4.30, June 2024) is old, and updating it is advisable.
+- **`deploy.ps1` stopped at the failed `sam build`, so nothing was half-deployed.**
+- **The SAM-managed bucket was deleted before the Catalogue moved off it.** For about an hour,
+  the live stack referenced a zip that no longer existed. That's harmless unless an update
+  fails and needs to roll back, which is exactly why the new bucket keeps zips for 90 days.
+  Order matters: redeploy onto the new bucket first, then delete the old one.
+
+**Cost:** unchanged, ≈ $0.00–0.02/month. The old bucket's storage is gone, and the new one is
+capped by its expiry rule.
+
+**Verified:**
+- **Tests and checks:** 29 shared-stack tests, 106 Catalogue tests and `sam validate --lint`
+  for both templates pass.
+- **Change sets:** the shared stack showed 3 `+ Add`. The Catalogue showed `CatalogueFunction`
+  Modify (`Static`, new code) and `CatalogueApi` Modify (`Dynamic`, ARN reference), both
+  `Replacement: False`.
+- **In AWS:** the deployed function's code comes from the new bucket. All 16 e2e tests passed.
+  Logs since the redeploy come only from the `catalogue` logger. The managed stack is
+  `DELETE_COMPLETE`, and the new bucket is the only one in the account.

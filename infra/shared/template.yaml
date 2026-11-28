@@ -2,6 +2,7 @@
 #
 #   - Cognito user pool, app client and the three role groups (identity)
 #   - EventBridge bus for domain events (Phase 3 publishes to it; created now so its name is fixed)
+#   - S3 bucket for deployment artifacts (the zipped code `sam deploy` uploads)
 #   - SSM parameters publishing the IDs services need
 #
 # Deployed as tessera-<env>-shared, BEFORE any service stack, and torn down LAST.
@@ -136,6 +137,69 @@ Resources:
         - Key: env
           Value: !Ref Env
 
+  # ---------------------------------------------------------------- deployment artifacts
+  # `sam deploy` uploads each service's zipped code here before CloudFormation creates the
+  # Lambda (Lambda keeps its own copy; the zip is only needed for deploys and rollbacks).
+  # Replaces the SAM-managed bucket, which kept every zip forever.
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    # Delete with the stack. CloudFormation can't delete a non-empty bucket, so teardown
+    # empties it first (see infra/shared/README.md).
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      # Bucket names are global across ALL AWS accounts; account ID + region make ours unique
+      # without a random suffix.
+      BucketName: !Sub tessera-${Env}-artifacts-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration: # never public, whatever a later policy or ACL says
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls: # ACLs disabled; access is controlled by IAM and the bucket policy only
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption: # SSE-S3: encrypted at rest with S3-managed keys (free)
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          # COST: old zips are deleted instead of piling up. 90 days, not less: rolling back
+          # a failed update needs the PREVIOUS deploy's zip to still exist.
+          - Id: expire-old-artifacts
+            Status: Enabled
+            ExpirationInDays: 90
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: project
+          Value: tessera
+        - Key: service
+          Value: shared
+        - Key: env
+          Value: !Ref Env
+
+  # A bucket policy is a resource-based policy: it is attached to the bucket and applies to
+  # every caller. This one refuses any request not made over HTTPS.
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub ${ArtifactsBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
   # ---------------------------------------------------------------- discovery (ADR 0002)
   # Service stacks read these by name. Standard-tier String parameters are free.
   UserPoolIdParameter:
@@ -188,7 +252,22 @@ Resources:
         service: shared
         env: !Ref Env
 
+  ArtifactsBucketParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /tessera/${Env}/artifacts/bucket-name
+      Type: String
+      Value: !Ref ArtifactsBucket
+      Description: S3 bucket for deployment artifacts (read by scripts/deploy.ps1)
+      Tags:
+        project: tessera
+        service: shared
+        env: !Ref Env
+
 Outputs:
+  ArtifactsBucketName:
+    Description: S3 bucket for deployment artifacts
+    Value: !Ref ArtifactsBucket
   UserPoolId:
     Description: Cognito user pool ID
     Value: !Ref UserPool

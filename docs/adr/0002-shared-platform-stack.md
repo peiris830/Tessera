@@ -19,6 +19,7 @@ Some resources are used by every service and belong to none of them: the **Cogni
   - `/tessera/<env>/cognito/app-client-id`
   - `/tessera/<env>/cognito/issuer-url`
   - `/tessera/<env>/eventbridge/bus-name`
+  - `/tessera/<env>/artifacts/bucket-name` *(added 2026-11-28, see Amendments)*
 - Service templates read them with SAM/CloudFormation dynamic references, e.g.
   `{{resolve:ssm:/tessera/dev/cognito/user-pool-id}}`, or as SSM-typed parameters.
 - Service-specific URLs follow the same pattern. Each service publishes its own base URL
@@ -39,3 +40,12 @@ Some resources are used by every service and belong to none of them: the **Cogni
 - Stacks are loosely coupled: a service only depends on a parameter name, not on another stack.
 - Standard SSM parameters are free, which suits the free tier.
 - `infra/` is added to the repo layout.
+
+## Amendments
+
+- **2026-11-28, deployment artifacts bucket.** The shared stack also owns the S3 bucket that
+  `sam deploy` uploads service code to (`tessera-<env>-artifacts-<account>-<region>`: public
+  access blocked, HTTPS only, objects expire after 90 days). It replaces the SAM-managed
+  bucket, which kept every upload forever. Its name contains the account ID, so it isn't
+  committed in `samconfig.toml`: `scripts/deploy.ps1` reads `/tessera/<env>/artifacts/bucket-name`
+  and passes `--s3-bucket`. Teardown must empty the bucket before deleting the shared stack.
