@@ -73,15 +73,49 @@ def test_every_log_group_has_a_retention_limit():
     assert all("RetentionInDays" in g["Properties"] for g in log_groups)
 
 
-def test_api_requires_jwt_by_default_and_only_health_is_public():
+def test_api_requires_jwt_by_default_and_only_read_routes_are_public():
     api = resource("CatalogueApi")["Properties"]
     events = function_props()["Events"]
-    public = [name for name, e in events.items() if e["Properties"].get("Auth")]
+    public = {
+        (e["Properties"]["Method"], e["Properties"]["Path"])
+        for e in events.values()
+        if e["Properties"].get("Auth", {}).get("Authorizer") == "NONE"
+    }
 
     assert api["Auth"]["DefaultAuthorizer"] == "CognitoJwt"
-    assert public == ["Health"]
-    assert events["Health"]["Properties"]["Auth"]["Authorizer"] == "NONE"
-    assert events["Health"]["Properties"]["Path"] == "/v1/health"
+    # Exactly these: GET reads plus the CORS preflight. Every write goes through the JWT
+    # authorizer (OPTIONS is answered with an empty 204 and never reaches a handler).
+    assert public == {
+        ("GET", "/v1/health"),
+        ("GET", "/v1/events"),
+        ("GET", "/v1/events/{eventId}"),
+        ("OPTIONS", "/v1/{proxy+}"),
+    }
+    assert events["Api"]["Properties"].get("Auth") is None  # catch-all uses the default
+
+
+def test_public_routes_match_the_apps_public_operations():
+    from app.main import PUBLIC_OPERATIONS
+
+    template_paths = {
+        (e["Properties"]["Method"], e["Properties"]["Path"].replace("{eventId}", "{event_id}"))
+        for e in function_props()["Events"].values()
+        if e["Properties"].get("Auth", {}).get("Authorizer") == "NONE"
+        and e["Properties"]["Method"] != "OPTIONS"  # preflight isn't an API operation
+    }
+    assert template_paths == PUBLIC_OPERATIONS
+
+
+def test_cors_allows_only_listed_origins_and_needed_headers():
+    cors = resource("CatalogueApi")["Properties"]["CorsConfiguration"]
+    origins_param = load_template()["Parameters"]["AllowedOrigins"]
+
+    assert cors["AllowOrigins"] == {"!Ref": "AllowedOrigins"}
+    assert "*" not in origins_param["Default"]
+    assert origins_param["Default"] == "http://localhost:5173"
+    assert set(cors["AllowHeaders"]) == {"authorization", "content-type", "x-correlation-id"}
+    assert "x-correlation-id" in cors["ExposeHeaders"]
+    assert cors["AllowCredentials"] is False
 
 
 def test_api_is_throttled():

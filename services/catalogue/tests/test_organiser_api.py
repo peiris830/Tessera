@@ -46,12 +46,40 @@ def test_organiser_creates_draft_event(client, act_as):
 def test_created_draft_is_visible_to_owner_only(client, act_as):
     act_as(ORGANISER)
     event_id = client.post("/v1/events", json=new_event_body()).json()["eventId"]
+    mine = f"/v1/organisers/me/events/{event_id}"
 
-    assert client.get(f"/v1/events/{event_id}").status_code == 200
+    assert client.get(mine).json()["status"] == "DRAFT"
     act_as(OTHER_ORGANISER)
-    assert client.get(f"/v1/events/{event_id}").status_code == 404
+    assert client.get(mine).status_code == 404  # someone else's draft: not revealed
     act_as(ATTENDEE)
-    assert client.get(f"/v1/events/{event_id}").status_code == 404
+    assert client.get(mine).status_code == 403  # organiser route
+
+
+def test_drafts_never_appear_on_public_routes_even_for_owner(client, act_as):
+    act_as(ORGANISER)
+    event_id = client.post("/v1/events", json=new_event_body()).json()["eventId"]
+
+    for caller in (ORGANISER, ATTENDEE, None):
+        act_as(caller)
+        assert client.get(f"/v1/events/{event_id}").status_code == 404
+
+
+def test_my_event_route_for_others_published_event_is_403(client, act_as, repo):
+    event = make_event(organiser_id=OTHER_ORGANISER.user_id)
+    repo.create(event)
+    act_as(ORGANISER)
+
+    response = client.get(f"/v1/organisers/me/events/{event.event_id}")
+
+    assert response.status_code == 403
+    assert error_code(response) == "NOT_EVENT_OWNER"
+
+
+def test_my_event_route_requires_identity_and_existing_event(client, act_as):
+    act_as(None)
+    assert client.get("/v1/organisers/me/events/nope").status_code == 401
+    act_as(ORGANISER)
+    assert client.get("/v1/organisers/me/events/nope").status_code == 404
 
 
 def test_attendee_cannot_create_event(client, act_as):

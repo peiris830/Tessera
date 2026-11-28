@@ -24,6 +24,15 @@ def test_get_event_returns_public_fields_in_camel_case(client, repo):
     assert "organiserId" not in body
 
 
+def test_anonymous_visitors_can_browse_and_read_published_events(client, repo, act_as):
+    event = make_event()
+    repo.create(event)
+    act_as(None)
+
+    assert client.get(f"/v1/events/{event.event_id}").status_code == 200
+    assert [e["eventId"] for e in client.get("/v1/events").json()["items"]] == [event.event_id]
+
+
 def test_get_cancelled_event_is_still_visible(client, repo):
     event = make_event(status=EventStatus.CANCELLED)
     repo.create(event)

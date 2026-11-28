@@ -94,9 +94,19 @@ def test_attendee_claims_are_forbidden_from_creating(lambda_repo):
 
 
 def test_event_without_authorizer_claims_is_unauthenticated(lambda_repo):
-    event = http_api_event("GET", "/v1/events")
+    event = http_api_event("GET", "/v1/organisers/me/events")
 
     assert handler(event, None)["statusCode"] == 401
+
+
+def test_public_browse_works_without_authorizer_claims(lambda_repo):
+    """What API Gateway sends for the public routes: no authorizer section at all."""
+    event = http_api_event("GET", "/v1/events")
+
+    result = handler(event, None)
+
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"])["items"] == []
 
 
 def test_lambda_handler_serves_health_check():
@@ -107,3 +117,11 @@ def test_lambda_handler_serves_health_check():
     assert result["statusCode"] == 200
     assert json.loads(result["body"]) == {"status": "ok", "service": "catalogue"}
     assert result["headers"]["x-correlation-id"] == "lambda-test-1"
+
+
+def test_cors_preflight_is_answered_without_claims_or_touching_the_table():
+    """The template's token-less OPTIONS route lands here; API Gateway adds CORS headers."""
+    headers = {"origin": "http://localhost:5173", "access-control-request-method": "POST"}
+    event = http_api_event("OPTIONS", "/v1/events", headers)
+
+    assert handler(event, None)["statusCode"] == 204

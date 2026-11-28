@@ -55,7 +55,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Event */
+        /**
+         * Get Event
+         * @description A published or cancelled event. Drafts are 404 here for everyone, including the owner.
+         */
         get: operations["get_event_v1_events__event_id__get"];
         put?: never;
         post?: never;
@@ -95,6 +98,27 @@ export interface paths {
          * @description All of the caller's events (drafts, published, cancelled), ordered by start time.
          */
         get: operations["list_my_events_v1_organisers_me_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/organisers/me/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Event
+         * @description One of the caller's own events in any status, including drafts (the public
+         *     GET /v1/events/{id} never returns drafts). Other organisers' events: 404 or 403.
+         */
+        get: operations["get_my_event_v1_organisers_me_events__event_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -264,15 +288,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description No valid identity */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description Request failed validation */
             422: {
                 headers: {
@@ -353,15 +368,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventOut"];
-                };
-            };
-            /** @description No valid identity */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Not found (or not visible to this caller) */
@@ -563,6 +569,64 @@ export interface operations {
             };
             /** @description Signed in, but not allowed (wrong role or not the owner) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request failed validation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_my_event_v1_organisers_me_events__event_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventOut"];
+                };
+            };
+            /** @description No valid identity */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Signed in, but not allowed (wrong role or not the owner) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found (or not visible to this caller) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

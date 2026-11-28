@@ -1,4 +1,4 @@
-from app.main import create_app
+from app.main import PUBLIC_OPERATIONS, create_app
 from scripts.export_openapi import SPEC_PATH, render_spec
 
 
@@ -8,14 +8,16 @@ def test_committed_spec_matches_the_code():
     )
 
 
-def test_protected_operations_require_jwt_and_health_does_not():
+def test_only_public_reads_skip_jwt_in_the_spec():
     spec = create_app().openapi()
 
-    assert spec["paths"]["/v1/health"]["get"].get("security") is None
     for path, operations in spec["paths"].items():
-        if path != "/v1/health":
-            for operation in operations.values():
-                assert operation["security"] == [{"cognitoJwt": []}], path
+        for method, operation in operations.items():
+            if (method.upper(), path) in PUBLIC_OPERATIONS:
+                assert operation.get("security") is None, (method, path)
+            else:
+                assert operation["security"] == [{"cognitoJwt": []}], (method, path)
+    assert spec["paths"]["/v1/events"]["post"]["security"]  # same path, protected method
 
 
 def test_error_responses_document_the_real_error_body():

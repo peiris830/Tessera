@@ -30,6 +30,13 @@ Parameters:
     Default: /tessera/dev/cognito/app-client-id
     Description: SSM parameter holding the Cognito app client ID (from the shared stack).
 
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: http://localhost:5173
+    Description: >-
+      Browser origins allowed to call this API (CORS): the Vite dev server now, the CloudFront
+      URL once the frontend is hosted. Never "*" for an API that accepts tokens.
+
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -141,6 +148,35 @@ Resources:
             Path: /v1/health
             Auth:
               Authorizer: NONE # public liveness check
+        # Public browsing: no token needed, so API Gateway passes no claims and the code
+        # only ever returns PUBLISHED/CANCELLED events on these two routes.
+        PublicEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CatalogueApi
+            Method: GET
+            Path: /v1/events
+            Auth:
+              Authorizer: NONE
+        PublicEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CatalogueApi
+            Method: GET
+            Path: /v1/events/{eventId}
+            Auth:
+              Authorizer: NONE
+        # CORS preflight: browsers send OPTIONS without a token, so without this route the
+        # ANY catch-all's JWT authorizer would reject every preflight with 401. API Gateway
+        # applies CorsConfiguration to the response; the app answers OPTIONS with 204.
+        Preflight:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CatalogueApi
+            Method: OPTIONS
+            Path: /v1/{proxy+}
+            Auth:
+              Authorizer: NONE
         Api:
           Type: HttpApi
           Properties:
@@ -177,6 +213,15 @@ Resources:
               issuer: !Ref CognitoIssuerUrl
               audience:
                 - !Ref CognitoAppClientId
+      # CORS: browsers only let a page on another origin call this API if the API says so.
+      # API Gateway answers the preflight OPTIONS request and adds these headers itself.
+      CorsConfiguration:
+        AllowOrigins: !Ref AllowedOrigins
+        AllowMethods: [GET, POST, PATCH, OPTIONS]
+        AllowHeaders: [authorization, content-type, x-correlation-id]
+        ExposeHeaders: [x-correlation-id, location] # let the app read these response headers
+        MaxAge: 600 # browsers may cache the preflight answer for 10 minutes
+        AllowCredentials: false # tokens go in the Authorization header, not cookies
       # Throttling caps requests per second across the API. It protects the backend and
       # also caps cost if something (or someone) floods the API.
       DefaultRouteSettings:

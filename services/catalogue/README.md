@@ -7,14 +7,19 @@
 | Method | Route | Who | Notes |
 |---|---|---|---|
 | GET | `/v1/health` | anyone | liveness check |
-| GET | `/v1/events` | any signed-in user | upcoming published events, soonest first; `limit`, `from`, `nextToken` |
-| GET | `/v1/events/{eventId}` | any signed-in user | published/cancelled events; drafts only for their owner (others: 404) |
+| GET | `/v1/events` | anyone (no token) | upcoming published events, soonest first; `limit`, `from`, `nextToken` |
+| GET | `/v1/events/{eventId}` | anyone (no token) | published/cancelled events only; drafts are `404` for everyone, owner included |
 | POST | `/v1/events` | organiser | creates a DRAFT owned by the caller; `201` + `Location` |
 | PATCH | `/v1/events/{eventId}` | owning organiser | partial update; capacity locked once published (`409 CAPACITY_LOCKED`) |
 | POST | `/v1/events/{eventId}/publish` | owning organiser | DRAFT → PUBLISHED; must start in the future |
 | GET | `/v1/organisers/me/events` | organiser | caller's own events, all statuses |
+| GET | `/v1/organisers/me/events/{eventId}` | owning organiser | one of the caller's events, drafts included |
 
-**Access rules:** no identity → `401`; wrong role → `403 FORBIDDEN`; can't see it (missing or
+**CORS:** browsers may call the API from the origins in the `AllowedOrigins` template parameter
+(default `http://localhost:5173`). Preflight `OPTIONS` requests go through a token-less route
+and get an empty `204`; API Gateway adds the CORS headers.
+
+**Access rules:** no identity on a protected route → `401`; wrong role → `403 FORBIDDEN`; can't see it (missing or
 someone else's draft) → `404`; can see it but not yours → `403 NOT_EVENT_OWNER`; state forbids
 the change → `409`. Identity comes only from API Gateway's verified JWT claims.
 
@@ -27,6 +32,7 @@ the change → `409`. Identity comes only from API Gateway's verified JWT claims
 - [x] 2c: authentication/roles/ownership, organiser endpoints (create, update, publish, list own)
 - [x] 2d: OpenAPI spec (generated, drift-tested), SAM template (table, function, API, logs)
 - [x] 4: deployed to dev (`tessera-dev-catalogue`); e2e smoke tests in `tests/e2e/`
+- [x] 5b-1: public browsing, owner draft route, CORS for the frontend
 
 ## Data model (`events` table)
 

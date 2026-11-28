@@ -79,16 +79,57 @@ def test_health_is_public(http: httpx.Client):
     assert response.headers["x-correlation-id"]
 
 
-def test_missing_token_is_rejected_by_api_gateway(http: httpx.Client):
+def test_browsing_is_public(http: httpx.Client):
     response = http.get("/v1/events")
+    assert response.status_code == 200
+    assert "items" in response.json()
+
+
+def test_missing_token_on_protected_route_is_rejected_by_api_gateway(http: httpx.Client):
+    response = http.get("/v1/organisers/me/events")
     assert response.status_code == 401
     # API Gateway's own body, not ours: HTTP APIs can't customise authorizer responses.
     assert response.json() == {"message": "Unauthorized"}
 
 
 def test_forged_token_is_rejected(http: httpx.Client):
-    response = http.get("/v1/events", headers={"Authorization": "Bearer not.a.jwt"})
+    response = http.get("/v1/organisers/me/events", headers={"Authorization": "Bearer not.a.jwt"})
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------- CORS (browser rules)
+
+DEV_ORIGIN = "http://localhost:5173"
+
+
+def preflight(http: httpx.Client, origin: str, method: str, path: str) -> httpx.Response:
+    """What a browser sends before a cross-origin request with an Authorization header."""
+    return http.options(
+        path,
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization,content-type,x-correlation-id",
+        },
+    )
+
+
+def test_preflight_from_dev_origin_is_allowed_even_on_protected_routes(http: httpx.Client):
+    response = preflight(http, DEV_ORIGIN, "POST", "/v1/events")
+    assert response.status_code in (200, 204)
+    assert response.headers["access-control-allow-origin"] == DEV_ORIGIN
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_preflight_from_unknown_origin_gets_no_permission(http: httpx.Client):
+    response = preflight(http, "https://evil.example", "POST", "/v1/events")
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cross_origin_response_exposes_correlation_id(http: httpx.Client):
+    response = http.get("/v1/events", headers={"Origin": DEV_ORIGIN})
+    assert response.headers["access-control-allow-origin"] == DEV_ORIGIN
+    assert "x-correlation-id" in response.headers["access-control-expose-headers"].lower()
 
 
 def test_correlation_id_is_propagated(http: httpx.Client, as_user):
@@ -125,9 +166,13 @@ def test_event_lifecycle_and_visibility(http: httpx.Client, as_user, created_eve
     assert created.headers["location"] == f"/v1/events/{event['eventId']}"
     path = f"/v1/events/{event['eventId']}"
 
-    # Drafts are invisible to everyone but the owner.
-    assert http.get(path, headers=owner).status_code == 200
-    assert http.get(path, headers=attendee).status_code == 404
+    # Drafts never appear on the public route (not even for the owner, or anonymously);
+    # the owner reads them via the authenticated /organisers/me route.
+    mine = f"/v1/organisers/me/events/{event['eventId']}"
+    assert http.get(mine, headers=owner).json()["status"] == "DRAFT"
+    assert http.get(mine, headers=other).status_code == 404
+    for headers in (owner, attendee, {}):
+        assert http.get(path, headers=headers).status_code == 404
     assert http.patch(path, json={"title": "Hijacked"}, headers=other).status_code == 404
 
     # Publish; now everyone can see it, but only the owner can change it.

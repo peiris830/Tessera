@@ -21,7 +21,13 @@ from app.logging_config import configure_logging
 from app.organisers import router as organisers_router
 
 SERVICE_NAME = "catalogue"
-PUBLIC_PATHS = {"/v1/health"}  # everything else requires a Cognito JWT
+# Operations reachable without a token (template.yaml opts these routes out of the JWT
+# authorizer). Everything else requires a Cognito JWT.
+PUBLIC_OPERATIONS = {
+    ("GET", "/v1/health"),
+    ("GET", "/v1/events"),
+    ("GET", "/v1/events/{event_id}"),
+}
 logger = logging.getLogger(SERVICE_NAME)
 
 
@@ -29,7 +35,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Tessera Catalogue API",
         version="0.1.0",
-        description="Events: browse (signed-in users) and manage (organisers).",
+        description="Events: browse (public) and manage (organisers).",
     )
     register_error_handlers(app)
     _document_jwt_security(app)
@@ -56,6 +62,14 @@ def create_app() -> FastAPI:
             },
         )
         return response
+
+    @app.middleware("http")
+    async def answer_cors_preflight(request: Request, call_next) -> Response:
+        # API Gateway routes token-less OPTIONS here (template.yaml "Preflight") and adds
+        # the CORS headers from its own config; the app just needs to say "fine".
+        if request.method == "OPTIONS":
+            return Response(status_code=204)
+        return await call_next(request)
 
     @app.get("/v1/health", tags=["ops"])
     def health() -> dict[str, str]:
@@ -91,8 +105,8 @@ def _document_jwt_security(app: FastAPI) -> None:
                 }
             }
             for path, operations in schema["paths"].items():
-                if path not in PUBLIC_PATHS:
-                    for operation in operations.values():
+                for method, operation in operations.items():
+                    if (method.upper(), path) not in PUBLIC_OPERATIONS:
                         operation["security"] = [{"cognitoJwt": []}]
             app.openapi_schema = schema
         return app.openapi_schema

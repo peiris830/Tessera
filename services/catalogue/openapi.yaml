@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Tessera Catalogue API
-  description: 'Events: browse (signed-in users) and manage (organisers).'
+  description: 'Events: browse (public) and manage (organisers).'
   version: 0.1.0
 paths:
   /v1/health:
@@ -70,20 +70,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: No valid identity
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '422':
           description: Request failed validation
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      security:
-      - cognitoJwt: []
     post:
       tags:
       - events
@@ -128,6 +120,8 @@ paths:
       tags:
       - events
       summary: Get Event
+      description: A published or cancelled event. Drafts are 404 here for everyone,
+        including the owner.
       operationId: get_event_v1_events__event_id__get
       parameters:
       - name: event_id
@@ -143,12 +137,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventOut'
-        '401':
-          description: No valid identity
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Not found (or not visible to this caller)
           content:
@@ -161,8 +149,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-      security:
-      - cognitoJwt: []
     patch:
       tags:
       - events
@@ -320,6 +306,57 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security:
+      - cognitoJwt: []
+  /v1/organisers/me/events/{event_id}:
+    get:
+      tags:
+      - organisers
+      summary: Get My Event
+      description: 'One of the caller''s own events in any status, including drafts
+        (the public
+
+        GET /v1/events/{id} never returns drafts). Other organisers'' events: 404
+        or 403.'
+      operationId: get_my_event_v1_organisers_me_events__event_id__get
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Event Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOut'
+        '401':
+          description: No valid identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Signed in, but not allowed (wrong role or not the owner)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Not found (or not visible to this caller)
           content:
             application/json:
               schema:

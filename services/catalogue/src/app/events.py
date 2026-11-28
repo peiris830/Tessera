@@ -1,6 +1,10 @@
-"""/v1/events: browse (any signed-in user) and manage (owning organiser).
+"""/v1/events: browse (public, no sign-in) and manage (owning organiser).
 
-Visibility and ownership rules:
+Browsing is public: API Gateway lets GET /v1/events and GET /v1/events/{id} through without a
+token, so these routes never know who is calling and only ever show PUBLISHED and CANCELLED
+events. Owners see their drafts via the authenticated /v1/organisers/me/events/{id}.
+
+Rules for the write routes:
   - can't see it (missing, or someone else's DRAFT)    -> 404 EVENT_NOT_FOUND
   - can see it but it isn't yours (others' PUBLISHED)  -> 403 NOT_EVENT_OWNER
   - yours, but its state forbids the change            -> 409
@@ -11,10 +15,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Query, Response
 from pydantic import AwareDatetime
 
-from app.auth import Caller, CurrentCaller, OrganiserCaller, get_caller
+from app.auth import Caller, OrganiserCaller
 from app.dependencies import Repo
 from app.errors import APIError, error_responses
 from app.models import Event, EventCreate, EventOut, EventPage, EventStatus, EventUpdate
@@ -23,15 +27,18 @@ from app.repository import EventConflictError, EventRepository, to_iso
 
 logger = logging.getLogger("catalogue")
 
-# Every route in this router requires a signed-in caller (defence in depth: API Gateway's
-# JWT authorizer enforces this too, but the service doesn't rely on that alone).
-router = APIRouter(prefix="/v1/events", tags=["events"], dependencies=[Depends(get_caller)])
+# Write routes declare OrganiserCaller, which requires a verified identity (401 otherwise):
+# defence in depth, since API Gateway's JWT authorizer also protects them.
+router = APIRouter(prefix="/v1/events", tags=["events"])
+
+# Visible on the public routes. DRAFT is deliberately absent.
+PUBLIC_STATUSES = frozenset({EventStatus.PUBLISHED, EventStatus.CANCELLED})
 
 
-# ---------- browse ----------
+# ---------- browse (public) ----------
 
 
-@router.get("", response_model=EventPage, responses=error_responses(400, 401, 422))
+@router.get("", response_model=EventPage, responses=error_responses(400, 422))
 def list_events(
     repo: Repo,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -56,9 +63,13 @@ def list_events(
     )
 
 
-@router.get("/{event_id}", response_model=EventOut, responses=error_responses(401, 404, 422))
-def get_event(event_id: str, caller: CurrentCaller, repo: Repo) -> EventOut:
-    return EventOut.from_event(_load_visible(repo, event_id, caller))
+@router.get("/{event_id}", response_model=EventOut, responses=error_responses(404, 422))
+def get_event(event_id: str, repo: Repo) -> EventOut:
+    """A published or cancelled event. Drafts are 404 here for everyone, including the owner."""
+    event = repo.get(event_id)
+    if event is None or event.status not in PUBLIC_STATUSES:
+        raise APIError(404, "EVENT_NOT_FOUND", "Event not found")
+    return EventOut.from_event(event)
 
 
 # ---------- manage (organisers) ----------
@@ -88,7 +99,7 @@ def create_event(
     "/{event_id}", response_model=EventOut, responses=error_responses(401, 403, 404, 409, 422)
 )
 def update_event(event_id: str, body: EventUpdate, caller: OrganiserCaller, repo: Repo) -> EventOut:
-    event = _load_owned(repo, event_id, caller)
+    event = load_owned(repo, event_id, caller)
     changes = body.model_dump(exclude_unset=True)
 
     if event.status == EventStatus.CANCELLED:
@@ -121,7 +132,7 @@ def update_event(event_id: str, body: EventUpdate, caller: OrganiserCaller, repo
     responses=error_responses(401, 403, 404, 409, 422),
 )
 def publish_event(event_id: str, caller: OrganiserCaller, repo: Repo) -> EventOut:
-    event = _load_owned(repo, event_id, caller)
+    event = load_owned(repo, event_id, caller)
     now = datetime.now(UTC)
     if event.status != EventStatus.DRAFT:
         raise APIError(409, "EVENT_NOT_DRAFT", "Only draft events can be published")
@@ -139,19 +150,15 @@ def publish_event(event_id: str, caller: OrganiserCaller, repo: Repo) -> EventOu
 # ---------- helpers ----------
 
 
-def _load_visible(repo: EventRepository, event_id: str, caller: Caller) -> Event:
-    """Return the event if this caller may see it, else 404 (without revealing drafts)."""
+def load_owned(repo: EventRepository, event_id: str, caller: Caller) -> Event:
+    """The caller's own event, else 404 (missing or someone else's draft: nothing to reveal)
+    or 403 (someone else's published/cancelled event, which is public anyway)."""
     event = repo.get(event_id)
-    if event is None or (
-        event.status == EventStatus.DRAFT and event.organiser_id != caller.user_id
-    ):
+    if event is None:
         raise APIError(404, "EVENT_NOT_FOUND", "Event not found")
-    return event
-
-
-def _load_owned(repo: EventRepository, event_id: str, caller: Caller) -> Event:
-    event = _load_visible(repo, event_id, caller)
     if event.organiser_id != caller.user_id:
+        if event.status not in PUBLIC_STATUSES:
+            raise APIError(404, "EVENT_NOT_FOUND", "Event not found")
         raise APIError(403, "NOT_EVENT_OWNER", "You can only manage your own events")
     return event
 

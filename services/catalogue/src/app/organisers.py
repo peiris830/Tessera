@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from app.auth import OrganiserCaller
 from app.dependencies import Repo
 from app.errors import APIError, error_responses
+from app.events import load_owned
 from app.models import EventOut, EventPage
 from app.pagination import MAX_TOKEN_LENGTH, InvalidPageTokenError, decode_token, encode_token
 
@@ -35,3 +36,12 @@ def list_my_events(
         items=[EventOut.from_event(e) for e in events],
         next_token=encode_token(last_key, caller.user_id) if last_key else None,
     )
+
+
+@router.get(
+    "/events/{event_id}", response_model=EventOut, responses=error_responses(401, 403, 404, 422)
+)
+def get_my_event(event_id: str, caller: OrganiserCaller, repo: Repo) -> EventOut:
+    """One of the caller's own events in any status, including drafts (the public
+    GET /v1/events/{id} never returns drafts). Other organisers' events: 404 or 403."""
+    return EventOut.from_event(load_owned(repo, event_id, caller))

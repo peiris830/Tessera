@@ -651,3 +651,53 @@ actions appear on hover.
 - correlation IDs.
 
 `check:api` passes and the production build succeeds.
+## Phase 1 – Step 5b-1: public browsing, owner draft route, CORS
+
+**What:** the Catalogue API is ready to be called from the browser. This is the backend part
+of sign-in (5b); 5b-2 adds the Cognito login page, 5b-3 the frontend sign-in.
+- `GET /v1/events` and `GET /v1/events/{eventId}` are **public**: no token. They return only
+  PUBLISHED and CANCELLED events.
+- Drafts are `404` on the public route for everyone, **owner included**. The owner reads them
+  through the new authenticated `GET /v1/organisers/me/events/{eventId}`.
+- **CORS** is configured on the HTTP API for the origins in a new `AllowedOrigins` parameter
+  (default `http://localhost:5173`, the Vite dev server).
+- The OpenAPI spec marks security **per operation** (`GET /v1/events` public, `POST /v1/events`
+  protected), and the frontend types were regenerated.
+
+**Why:** visitors should see what's on before signing in (decided in 5b). Keeping drafts off
+the public route entirely, rather than showing them to their owner there, means that route's
+answer never depends on who's asking, which keeps it simple and cacheable later. The owner's
+view lives under `/organisers/me`, where a token is always required.
+
+**Concepts:**
+- **Per-route authorizers on an HTTP API:** the JWT authorizer is the default for every route;
+  a route opts out with `Auth: Authorizer: NONE`. API Gateway picks the most specific route,
+  so `GET /v1/events` (public) wins over `ANY /v1/{proxy+}` (JWT), while `POST /v1/events`
+  still falls through to the catch-all.
+- **CORS:** a browser only lets a page read a response from another origin (here: the API's
+  domain vs `localhost:5173`) if the response says that origin is allowed. Before a request
+  with an `Authorization` header, the browser first sends a **preflight** `OPTIONS` request
+  asking "may I?". It never attaches the token to the preflight.
+- **API Gateway owns CORS:** with `CorsConfiguration` set, API Gateway adds the
+  `Access-Control-*` headers itself and ignores any the backend returns, so the allowed
+  origins live in one place (the template).
+- **Tests tie the template to the code:** a unit test checks that the template's public routes
+  are exactly the app's `PUBLIC_OPERATIONS`, so they can't drift apart.
+
+**Problems hit:**
+- **Preflights were rejected with 401.** The e2e test caught it after the first deploy:
+  `OPTIONS /v1/events` matched the `ANY /v1/{proxy+}` route, whose JWT authorizer rejects
+  requests without a token, and preflights never carry one. Every browser call to a protected
+  endpoint would have failed before being sent. Fixed with a token-less
+  `OPTIONS /v1/{proxy+}` route plus a tiny middleware answering `OPTIONS` with `204`;
+  API Gateway adds the CORS headers. No other method is opened.
+- **API Gateway's own 401 body** is `{"message":"Unauthorized"}`, not our error format. HTTP APIs
+  can't customise authorizer responses; the e2e test documents it.
+
+**Cost:** none. Two extra routes and three Lambda permissions are free; requests are
+billed as before.
+
+**Verified:** 115 unit tests (public browse, anonymous reads, drafts 404 on the public route,
+owner route incl. 403/404, OpenAPI security per operation, template-vs-code public routes,
+CORS settings, preflight → 204), `sam validate --lint`, frontend typecheck and tests.
+E2E against AWS: 20 tests pass, including the dev-origin preflight on a protected route (`204` with `access-control-allow-origin`), no CORS permission for an unknown origin, anonymous browsing, and drafts hidden on the public route but readable by their owner via `/organisers/me`.
